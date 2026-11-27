@@ -26,9 +26,10 @@ iPhone                                       Windows-PC
 | `windows/vcam/` | Virtuelle Kamera `krakzncam_vcam.dll` (Media Source für Windows 11) | fertig |
 | `windows/tools/fakephone.cpp` | Testquelle: spielt das iPhone mit einem Testbild, reagiert auf Einstellungen | fertig |
 | `windows/tools/vcamtest.cpp` | Liest die virtuelle Kamera wie OBS und speichert ein Bild | fertig |
+| `windows/setup/` | `KrakznCam-Setup.exe`: installieren, aktualisieren, deinstallieren (im KrakznCam-Design) | fertig |
 | `tools/krakzncam_test.py` | Testprogramm in Python: empfängt den Stream über USB, zeigt FPS/Bitrate | fertig |
 | `docs/protokoll.md` | Wie iPhone und PC miteinander reden | fertig |
-| `.github/workflows/` | Cloud-Builds für iPhone-App (macOS) und Windows-Programm | fertig |
+| `.github/workflows/` | Cloud-Builds für iPhone-App (macOS) und Windows-Programm, dazu `release.yml` für Updates | fertig |
 
 ## iPhone-App bauen (ohne Mac)
 
@@ -56,9 +57,14 @@ iPhone                                       Windows-PC
 
 ## Windows-Programm
 
-1. Unter **Actions → „Windows-Programm bauen“** das Artefakt **KrakznCam-Windows** herunterladen und entpacken.
-2. `krakzncam.exe` starten. Beim ersten Mal warnt Windows („Der Computer wurde durch Windows geschützt“),
-   weil das Programm kein kostenpflichtiges Zertifikat hat. Dann **Weitere Informationen → Trotzdem ausführen**.
+1. Unter **[Releases](https://github.com/Kr3akz/Krakzn-Cam/releases/latest)** `KrakznCam-Setup.exe` herunterladen
+   und starten. Beim ersten Mal warnt Windows („Der Computer wurde durch Windows geschützt“), weil das
+   Setup kein kostenpflichtiges Zertifikat hat. Dann **Weitere Informationen → Trotzdem ausführen**.
+   - Installiert wird nur für dich nach `%LOCALAPPDATA%\Programs\KrakznCam`, ohne Administratorrechte.
+   - Auf Wunsch richtet das Setup gleich die virtuelle Kamera ein (eine Windows-Abfrage).
+   - Die iPhone-App `KrakznCam.ipa` liegt danach im Programmordner („App-Datei zeigen“ unter Einrichtung).
+   - Entfernen über **Einstellungen → Apps → KrakznCam → Deinstallieren**.
+2. KrakznCam aus dem Startmenü starten.
 3. Rechts unter **Einrichtung** zeigt das Programm, was fehlt. Die Knöpfe starten im Browser direkt
    denselben Download wie die Knöpfe auf sideloadly.io (iTunes und iCloud als Web-Version von Apple).
    Kommst du nach der Installation ins Fenster zurück, prüft es von selbst neu.
@@ -69,6 +75,22 @@ iPhone                                       Windows-PC
    Bildstabilisierung, HDR, Spiegeln und Licht. Graue Regler zeigen, was die Automatik gerade wählt;
    sobald du einen ziehst, gilt dein Wert. Der Pfeil neben einer Überschrift schaltet zurück auf Automatik.
    Die Werte bleiben auf dem iPhone gespeichert.
+
+### Updates
+
+KrakznCam schaut beim Start und danach alle 6 Stunden, ob es ein neueres Release gibt. Dann erscheint
+oben rechts **„Update 0.x.y“**. Ein Klick lädt das Setup, KrakznCam schließt sich, das Setup
+aktualisiert und startet KrakznCam neu. Der Download wird an Größe und SHA-256-Prüfsumme geprüft.
+
+So veröffentlichst du ein Update:
+1. Auf GitHub **Releases → Draft a new release** öffnen.
+2. Bei **Choose a tag** einen neuen Tag eintippen, z. B. `v0.2.0`. Er muss höher sein als der letzte.
+3. Titel und Notizen eintragen, **Publish release** klicken.
+4. Nach etwa 10 Minuten hängen `KrakznCam-Setup.exe` und `KrakznCam.ipa` am Release
+   (Workflow „Release bauen“). Erst dann sehen die Programme das Update.
+
+Hat sich die iPhone-App geändert, muss die neue `KrakznCam.ipa` von Hand mit Sideloadly aufgespielt werden
+(Datei neu auswählen). Die automatische Erneuerung von Sideloadly signiert nur die alte Datei neu.
 
 ### Virtuelle Kamera für OBS (Windows 11)
 
@@ -108,7 +130,8 @@ Die virtuelle Kamera prüfen, so wie OBS sie öffnet (KrakznCam muss laufen):
 
 Protokolle:
 - `%LOCALAPPDATA%\KrakznCam\krakzncam.log` (Programm)
-- `%LOCALAPPDATA%\KrakznCam\kamera-einrichtung.log` (Einrichten der virtuellen Kamera)
+- `%LOCALAPPDATA%\KrakznCam\einrichtung.log` (Einrichten der virtuellen Kamera, Aufräumen beim Deinstallieren)
+- `%TEMP%\KrakznCam-Setup.log` (Setup)
 - `C:\ProgramData\KrakznCam\vcam.log` (virtuelle Kamera im Windows-Kameradienst)
 
 ## Verbindung testen (Python)
@@ -137,4 +160,4 @@ Mit „Bildschirm abdunkeln“ in der App sparst du Akku, die Übertragung läuf
 
 ## Nächste Schritte
 
-1. **Installationspaket** `KrakznCam-Setup.exe`, das Programm, virtuelle Kamera und KrakznCam-App mitbringt.
+1. **WLAN statt Kabel:** einmal per USB koppeln, danach verschlüsselt über WLAN (Idee, noch nicht gebaut).
