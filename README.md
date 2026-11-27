@@ -13,18 +13,19 @@ iPhone                                       Windows-PC
 
 **Wenig Last, gute Qualität:**
 - Kodiert und dekodiert wird in den Video-Chips von iPhone und Grafikkarte.
-- Über USB passt viel Bitrate durch (1080p30 mit 12 Mbit/s).
-- Kodiert wird nur, wenn ein PC verbunden ist.
+- Über USB passt viel Bitrate durch (1080p60 mit etwa 20 Mbit/s).
+- Kodiert wird nur, wenn ein PC verbunden ist. Das Windows-Programm zeichnet nur bei neuen Bildern.
 
 ## Ordner
 
 | Ordner | Inhalt | Stand |
 |--------|--------|-------|
-| `ios/` | iPhone-App (Swift, AVFoundation, VideoToolbox) | geschrieben, wird in der Cloud gebaut |
-| `tools/kabelcam_test.py` | Testprogramm: empfängt den Stream über USB, zeigt FPS/Bitrate, speichert `.h264` | fertig |
+| `ios/` | iPhone-App (Swift, AVFoundation, VideoToolbox) | wird in der Cloud gebaut |
+| `windows/` | Windows-Programm (C++): Empfang per USB, Dekodierung auf der Grafikkarte, Vorschau, Einrichtungsprüfung | Vorschau fertig, virtuelle Kamera folgt |
+| `windows/tools/fakephone.cpp` | Testquelle: spielt das iPhone mit einem Testbild | fertig |
+| `tools/kabelcam_test.py` | Testprogramm in Python: empfängt den Stream über USB, zeigt FPS/Bitrate | fertig |
 | `docs/protokoll.md` | Wie iPhone und PC miteinander reden | fertig |
-| `windows/` | Windows-Programm in C++ mit virtueller Kamera | nächster Schritt |
-| `.github/workflows/ios-build.yml` | Baut die App auf einem Mac in der Cloud | fertig |
+| `.github/workflows/` | Cloud-Builds für iPhone-App (macOS) und Windows-Programm | fertig |
 
 ## iPhone-App bauen (ohne Mac)
 
@@ -50,9 +51,32 @@ iPhone                                       Windows-PC
 > Mit einer **kostenlosen Apple-ID** läuft die App 7 Tage, danach musst du sie mit Sideloadly
 > neu aufspielen. Mit dem Apple-Entwicklerkonto (99 $ pro Jahr) hält sie ein Jahr.
 
-## Verbindung testen
+## Windows-Programm
 
-Solange es das Windows-Programm noch nicht gibt, prüft das Testprogramm die ganze Strecke.
+1. Unter **Actions → „Windows-Programm bauen“** das Artefakt **KabelCam-Windows** herunterladen und entpacken.
+2. `kabelcam.exe` starten. Beim ersten Mal warnt Windows („Der Computer wurde durch Windows geschützt“),
+   weil das Programm kein kostenpflichtiges Zertifikat hat. Dann **Weitere Informationen → Trotzdem ausführen**.
+3. Rechts unter **Einrichtung** zeigt das Programm, was fehlt. Die Knöpfe starten im Browser direkt
+   denselben Download wie die Knöpfe auf sideloadly.io (iTunes und iCloud als Web-Version von Apple).
+   Kommst du nach der Installation ins Fenster zurück, prüft es von selbst neu.
+4. iPhone anschließen, KabelCam auf dem iPhone öffnen, und das Bild erscheint.
+   Unter **Signatur** steht, wann du die App mit Sideloadly erneuern musst.
+
+Ohne iPhone ausprobieren:
+
+```powershell
+.\kabelcam_fakephone.exe
+```
+
+```powershell
+.\kabelcam.exe --direct 127.0.0.1:17878
+```
+
+Das Protokoll liegt unter `%LOCALAPPDATA%\KabelCam\kabelcam.log`.
+
+## Verbindung testen (Python)
+
+Unabhängig vom Windows-Programm prüft dieses Testprogramm die ganze Strecke.
 Es braucht nur Python, keine Zusatzpakete:
 
 ```powershell
@@ -76,11 +100,8 @@ Mit „Bildschirm abdunkeln“ in der App sparst du Akku, die Übertragung läuf
 
 ## Nächste Schritte
 
-1. **Windows-Empfänger (C++):**
-   - Verbindet sich über usbmux.
-   - Dekodiert mit Media Foundation auf der GPU.
-   - Zeigt eine Vorschau an.
-2. **Virtuelle Kamera:**
+1. **Virtuelle Kamera:**
    - Nutzt die Windows-11-Schnittstelle `MFCreateVirtualCamera`.
-   - Damit erscheint „KabelCam“ in Zoom, Teams, Discord, OBS und der Windows-Kamera-App.
-3. Steuerung vom PC aus: Objektiv, Zoom, Fokus.
+   - Damit erscheint „KabelCam“ in OBS, Zoom, Teams, Discord und der Windows-Kamera-App.
+2. **Installationspaket** `KabelCam-Setup.exe`, das die virtuelle Kamera registriert und die KabelCam-App mitbringt.
+3. **Steuerung vom PC aus:** Objektiv, Zoom, Fokus und Belichtung feststellen, fürs Streaming besonders wichtig.
