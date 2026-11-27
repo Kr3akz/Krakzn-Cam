@@ -75,7 +75,7 @@ iPhone                                       Windows-PC
 1. Unter **Einrichtung → Virtuelle Kamera** auf **Einrichten** klicken und die Windows-Abfrage bestätigen.
    Das passiert nur einmal: KrakznCam kopiert `krakzncam_vcam.dll` nach `C:\Program Files\KrakznCam`
    und meldet sie bei Windows an. `krakzncam_vcam.dll` muss dafür neben `krakzncam.exe` liegen.
-2. In OBS eine Quelle **Videoaufnahmegerät** hinzufügen und **KrakznCam** wählen
+2. In OBS eine Quelle **Videoaufnahmegerät** hinzufügen und **KrakznCam (Windows virtuelle Kamera)** wählen
    (1080p oder 720p, 30 oder 60 FPS). Das klappt genauso in Discord, Teams, Zoom und der Kamera-App.
 3. Die Kamera gibt es nur, solange KrakznCam läuft. Also zuerst KrakznCam starten, dann OBS.
    Ohne iPhone-Bild zeigt sie einen Hinweis statt eines schwarzen Bildes.

@@ -75,7 +75,8 @@ HRESULT OpenDevice(ComPtr<IMFMediaSource>& source) {
         UINT32 length = 0;
         devices[i]->GetAllocatedString(MF_DEVSOURCE_ATTRIBUTE_FRIENDLY_NAME, &name, &length);
         printf("  %ls\n", name ? name : L"?");
-        if (name && wcscmp(name, VCam::kFriendlyName) == 0 && !source) {
+        // Windows hängt bei virtuellen Kameras einen Zusatz an („KrakznCam (Windows virtuelle Kamera)“).
+        if (name && wcsncmp(name, VCam::kFriendlyName, wcslen(VCam::kFriendlyName)) == 0 && !source) {
             hr = devices[i]->ActivateObject(IID_PPV_ARGS(&source));
         }
         CoTaskMemFree(name);

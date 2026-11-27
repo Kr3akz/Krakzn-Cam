@@ -1276,7 +1276,8 @@ float App::DrawCameraRow(ImDrawList* dl, float listLeft, float listRight, float 
         iconColor = kText2;
         break;
     case State::Ready:
-        detail = "In OBS als Videoaufnahmegerät „KrakznCam“ wählbar, solange KrakznCam läuft.";
+        detail = "In OBS als Videoaufnahmegerät „KrakznCam (Windows virtuelle Kamera)“ wählbar, solange KrakznCam "
+                 "läuft.";
         chipLabel = "Bereit";
         iconColor = kGreen;
         break;
