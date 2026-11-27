@@ -41,6 +41,23 @@ std::string FormatDate(int64_t unixSeconds) {
     return buffer;
 }
 
+// Kalendertage bis zum Datum (heute = 0), unabhängig von der Uhrzeit.
+int CalendarDaysUntil(int64_t unixSeconds) {
+    time_t now = time(nullptr);
+    time_t then = static_cast<time_t>(unixSeconds);
+    tm today{};
+    tm target{};
+    localtime_s(&today, &now);
+    localtime_s(&target, &then);
+    for (tm* day : {&today, &target}) {
+        day->tm_hour = 12;
+        day->tm_min = 0;
+        day->tm_sec = 0;
+        day->tm_isdst = -1;
+    }
+    return static_cast<int>(std::lround(difftime(mktime(&target), mktime(&today)) / 86400.0));
+}
+
 const char* LensLabel(const std::string& lens) {
     if (lens == "wide") return "Weitwinkel";
     if (lens == "ultraWide") return "Ultraweitwinkel";
@@ -211,7 +228,7 @@ void App::DrawSignature(const StreamStatus& status) {
         ImGui::TextUnformatted("Abgelaufen");
         MutedWrapped("Spiele die App mit Sideloadly neu auf, dann läuft sie wieder 7 Tage.");
     } else {
-        const int days = static_cast<int>(std::floor(daysLeft));
+        const int days = CalendarDaysUntil(status.signatureExpires);
         StatusDot(days <= 2 ? kOrange : kGreen);
         ImGui::Text("Gültig bis %s", date.c_str());
         if (days == 0) MutedWrapped("Läuft heute ab. Jetzt mit Sideloadly erneuern.");

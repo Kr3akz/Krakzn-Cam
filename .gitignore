@@ -10,6 +10,9 @@ DerivedData/
 __pycache__/
 *.pyc
 
+# Fertige Programme zum Ausprobieren (kommen aus dem Cloud-Build)
+dist/
+
 # Testaufnahmen
 *.h264
 
