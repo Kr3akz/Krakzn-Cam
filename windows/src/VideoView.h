@@ -14,7 +14,7 @@ public:
 
     bool HasFrame() const { return m_hasFrame; }
     ID3D11ShaderResourceView* Srv() const { return m_srv.Get(); }
-    // Winzige Fassung des Bildes (64×36) für den weichen Hintergrund-Schein; kann null sein.
+    // Winzige Fassung des Bildes (32×18) für den weichen Hintergrund-Schein; kann null sein.
     ID3D11ShaderResourceView* AmbientSrv() const { return m_ambientSrv.Get(); }
     ID3D11Texture2D* OutputTexture() const { return m_output.Get(); }
     UINT Width() const { return m_width; }

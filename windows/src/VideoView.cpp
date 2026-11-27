@@ -109,8 +109,8 @@ VideoView::ConfigureResult VideoView::Configure(ID3D11Texture2D* input, const Fr
 void VideoView::ConfigureAmbient(ID3D11Texture2D* input, const FrameInfo& info) {
     // Zweiter, winziger Ausgang des Video-Prozessors. Groß gezogen wirkt er wie ein
     // Weichzeichner – ohne eigenen Shader und praktisch ohne Rechenaufwand.
-    constexpr UINT kWidth = 64;
-    constexpr UINT kHeight = 36;
+    constexpr UINT kWidth = 32;
+    constexpr UINT kHeight = 18;
     m_ambientInputView.Reset();
     m_ambientOutputView.Reset();
     m_ambientProcessor.Reset();
