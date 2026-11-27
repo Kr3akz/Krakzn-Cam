@@ -53,6 +53,12 @@ public:
     // hadInput wird true, wenn Nachrichten da waren (ImGui braucht danach noch ein, zwei Bilder).
     bool ProcessMessages(bool* hadInput = nullptr);
 
+    // Vor dem Zeichnen fragen: Nimmt der Bildschirm ein Bild an? (wartet höchstens timeoutMs)
+    // Bei false dieses Bild auslassen, sonst blockiert Present().
+    bool ReadyForFrame(DWORD timeoutMs);
+    // Fenster ganz verdeckt: Zeichnen lohnt nicht (prüft sich selbst alle 250 ms).
+    bool Occluded();
+
     void BeginFrame();
     // Zeichnet das ImGui-Bild; present = anzeigen (vsync = mit dem Bildschirm synchron).
     void EndFrame(bool present, bool vsync = true);
@@ -88,6 +94,8 @@ private:
     Microsoft::WRL::ComPtr<ID3D11RenderTargetView> m_renderTarget;
     float m_dpiScale = 1.0f;
     bool m_minimized = false;
+    bool m_occluded = false;
+    ULONGLONG m_lastOcclusionTest = 0;
     bool m_imguiReady = false;
 
     float m_captionHeight = 0.0f;

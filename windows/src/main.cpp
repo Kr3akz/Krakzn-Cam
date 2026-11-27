@@ -148,10 +148,14 @@ int RunLoop(UiHost& host, App& app, HANDLE frameEvent) {
         bool hadInput = false;
         if (!host.ProcessMessages(&hadInput)) break;
         if (hadInput) extraFrames = 2;  // ImGui braucht nach Eingaben noch ein, zwei Bilder
-        if (host.Minimized()) {
+        // Minimiert oder ganz verdeckt: nichts zeichnen. Empfang und virtuelle Kamera laufen weiter.
+        if (host.Minimized() || host.Occluded()) {
             extraFrames = 0;
             continue;
         }
+        // Nimmt der Bildschirm gerade kein Bild an (Fenster im Hintergrund), dieses Bild auslassen,
+        // statt in Present() zu warten und dabei Decoder und virtuelle Kamera aufzuhalten.
+        if (!host.ReadyForFrame(20)) continue;
         Frame(host, app, true);
         if (extraFrames > 0) --extraFrames;
     }
@@ -165,6 +169,7 @@ int RunSelftest(UiHost& host, App& app, StreamClient& client, HANDLE frameEvent,
     while (Clock::now() < deadline) {
         WaitForSingleObject(frameEvent, 100);
         host.ProcessMessages();
+        host.ReadyForFrame(100);
         Frame(host, app, true);
         if (options.frames > 0 && static_cast<int>(client.Status().framesDecoded) >= options.frames &&
             app.Video().HasFrame()) {
@@ -176,6 +181,7 @@ int RunSelftest(UiHost& host, App& app, StreamClient& client, HANDLE frameEvent,
         for (int i = 0; i < frames; ++i) {
             Sleep(16);
             host.ProcessMessages();
+            host.ReadyForFrame(100);
             Frame(host, app, true);
         }
     };
@@ -229,6 +235,15 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand) {
     }
     LogInit(logPath);
     LogLine("KrakznCam %s startet", KRAKZNCAM_VERSION);
+
+    // Windows 11 drosselt Programme, deren Fenster nicht vorne ist („Effizienzmodus“: langsamere
+    // Kerne, gröbere Zeitgeber). KrakznCam muss im Hintergrund genauso schnell empfangen und an
+    // OBS liefern, deshalb davon ausnehmen.
+    PROCESS_POWER_THROTTLING_STATE throttling{};
+    throttling.Version = PROCESS_POWER_THROTTLING_CURRENT_VERSION;
+    throttling.ControlMask = PROCESS_POWER_THROTTLING_EXECUTION_SPEED | PROCESS_POWER_THROTTLING_IGNORE_TIMER_RESOLUTION;
+    throttling.StateMask = 0;
+    SetProcessInformation(GetCurrentProcess(), ProcessPowerThrottling, &throttling, sizeof(throttling));
 
     CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
     MFStartup(MF_VERSION);

@@ -78,4 +78,20 @@ inline std::wstring FrameEventName() {
     return MappingName() + L"Frame";
 }
 
+// Markierung „KrakznCam läuft und liefert die Bilder“. Gibt es sie nicht, empfängt die
+// Kamera-DLL das iPhone selbst (z. B. wenn nur OBS offen ist).
+inline std::wstring AppMutexName() {
+    return MappingName() + L"App";
+}
+
+// Läuft KrakznCam? Auch ein fremdes, nicht zu öffnendes Objekt zählt (anderer Benutzer/Dienst).
+inline bool AppRunning() {
+    HANDLE mutex = OpenMutexW(SYNCHRONIZE, FALSE, AppMutexName().c_str());
+    if (mutex) {
+        CloseHandle(mutex);
+        return true;
+    }
+    return GetLastError() == ERROR_ACCESS_DENIED;
+}
+
 }  // namespace VCam

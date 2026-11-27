@@ -8,6 +8,7 @@
 // Die Bilder kommen aus dem gemeinsamen Speicher (VCamShared.h); fehlt KrakznCam, zeigt die
 // Kamera einen Platzhalter.
 
+#include "DirectFeed.h"
 #include "Placeholder.h"
 #include "VCamShared.h"
 
@@ -415,12 +416,15 @@ public:
         ResetEvent(m_stopEvent);
         m_worker = std::thread([this] { Worker(); });
         Log("Strom startet: %ux%u, %u FPS%s", width, height, m_fps, allocator ? "" : " (ohne Sample-Allocator)");
+        // Läuft KrakznCam nicht, empfängt die Kamera das iPhone selbst.
+        m_direct.Start();
         RETURN_IF_FAILED(QueueEvent(MEStreamStarted, GUID_NULL, S_OK, nullptr));
         return S_OK;
     }
 
     HRESULT Stop() {
         StopWorker();
+        m_direct.Stop();  // trennt das iPhone, damit es nicht mehr umsonst kodiert
         {
             std::lock_guard lock(m_mutex);
             if (m_shutdown) return MF_E_SHUTDOWN;
@@ -435,6 +439,7 @@ public:
 
     void Shutdown() {
         StopWorker();
+        m_direct.Stop();
         std::lock_guard lock(m_mutex);
         if (m_shutdown) return;
         m_shutdown = true;
@@ -626,6 +631,7 @@ private:
     HANDLE m_stopEvent = nullptr;
     HANDLE m_requestEvent = nullptr;
     std::thread m_worker;
+    DirectFeed m_direct;  // empfängt das iPhone selbst, wenn KrakznCam nicht läuft
     uint64_t m_delivered = 0;
     // Nur im Arbeits-Thread benutzt.
     SharedFrames m_frames;

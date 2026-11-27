@@ -1,4 +1,5 @@
 #pragma once
+#include "CameraFeeder.h"
 #include "FrameStore.h"
 #include "VCamShared.h"
 
@@ -6,7 +7,6 @@
 #include <wrl/client.h>
 
 #include <atomic>
-#include <chrono>
 #include <cstdint>
 #include <mutex>
 #include <string>
@@ -15,9 +15,11 @@
 struct IMFVirtualCamera;
 
 // Die virtuelle Kamera „KrakznCam“ (Windows 11), z. B. für OBS.
-// - Meldet die Kamera bei Windows an, solange KrakznCam läuft (danach verschwindet sie wieder).
+// - Seit der Einrichtung ist sie dauerhaft bei Windows angemeldet, OBS findet sie also auch,
+//   wenn KrakznCam geschlossen ist (die Kamera-DLL empfängt das iPhone dann selbst).
+// - Läuft KrakznCam, liefert es die Bilder und die Kamera-DLL hält sich zurück.
+// - Ältere Einrichtungen ohne dauerhafte Anmeldung: Anmeldung nur, solange KrakznCam läuft.
 // - Rechnet Bilder nur um, solange ein Programm die Kamera wirklich benutzt.
-// - Die Kamera-DLL muss einmalig mit Administratorrechten eingerichtet werden (InstallAsync).
 class VirtualCamera {
 public:
     enum class State {
@@ -34,6 +36,7 @@ public:
         int width = 0;  // bei InUse: gewünschtes Format
         int height = 0;
         int fps = 0;
+        bool persistent = false;       // dauerhaft angemeldet (auch ohne laufendes KrakznCam)
         bool updateAvailable = false;  // DLL neben krakzncam.exe ist neuer als die eingerichtete
         bool installing = false;
         std::string installError;      // letzte Einrichtung fehlgeschlagen
@@ -61,18 +64,14 @@ private:
     void RefreshInstallState();
     bool Register();
     void Unregister();
-    bool OpenShared();
-    void CloseShared();
-    void Feed();
-    bool ConfigureProcessor(ID3D11Texture2D* input, const FrameInfo& info, UINT width, UINT height);
     void SetState(State state, const std::string& detail = {});
 
-    Microsoft::WRL::ComPtr<ID3D11Device> m_device;
-    Microsoft::WRL::ComPtr<ID3D11DeviceContext> m_context;
     FrameStore& m_store;
+    CameraFeeder m_feeder;
     HANDLE m_frameEvent = nullptr;
     HANDLE m_stopEvent = nullptr;
     HANDLE m_wakeEvent = nullptr;
+    HANDLE m_appMutex = nullptr;  // zeigt der Kamera-DLL: KrakznCam läuft und liefert die Bilder
     std::thread m_thread;
     std::thread m_installThread;
     bool m_register = true;
@@ -81,37 +80,8 @@ private:
     std::mutex m_mutex;
     Status m_status;
     bool m_installed = false;
+    bool m_persistent = false;
 
     // Nur im Arbeits-Thread:
     Microsoft::WRL::ComPtr<IMFVirtualCamera> m_camera;
-    HANDLE m_mapping = nullptr;
-    VCam::Header* m_header = nullptr;
-    ULONGLONG m_lastOpenAttempt = 0;
-    HANDLE m_frameReadyEvent = nullptr;  // „neues Bild“ an die Kamera
-    ULONGLONG m_lastEventAttempt = 0;
-    std::chrono::steady_clock::time_point m_lastWriteTime;
-    // Zwei Zwischenpuffer im Wechsel: Die Grafikkarte rechnet das neue Bild, während das vorige,
-    // längst fertige ausgelesen wird. So muss nie auf die Grafikkarte gewartet werden.
-    Microsoft::WRL::ComPtr<ID3D11Query> m_copyDone[2];
-    bool m_stagingFull[2] = {false, false};
-    int m_stagingNext = 0;
-    std::chrono::steady_clock::time_point m_statStart;
-    uint32_t m_statFrames = 0;
-    double m_statTotalMs = 0.0;
-    double m_statMaxMs = 0.0;
-    double m_statMaxGapMs = 0.0;
-    uint64_t m_lastCounter = 0;
-    Microsoft::WRL::ComPtr<ID3D11VideoDevice> m_videoDevice;
-    Microsoft::WRL::ComPtr<ID3D11VideoContext> m_videoContext;
-    Microsoft::WRL::ComPtr<ID3D11VideoProcessorEnumerator> m_enumerator;
-    Microsoft::WRL::ComPtr<ID3D11VideoProcessor> m_processor;
-    Microsoft::WRL::ComPtr<ID3D11VideoProcessorInputView> m_inputView;
-    Microsoft::WRL::ComPtr<ID3D11VideoProcessorOutputView> m_outputView;
-    Microsoft::WRL::ComPtr<ID3D11Texture2D> m_output;
-    Microsoft::WRL::ComPtr<ID3D11Texture2D> m_staging[2];
-    ID3D11Texture2D* m_configuredInput = nullptr;
-    FrameInfo m_configuredInfo;
-    UINT m_outputWidth = 0;
-    UINT m_outputHeight = 0;
-    ULONGLONG m_processorRetryAt = 0;  // nach einem Fehler später erneut versuchen
 };

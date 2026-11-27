@@ -201,9 +201,25 @@ bool UiHost::ProcessMessages(bool* hadInput) {
     return running;
 }
 
+bool UiHost::ReadyForFrame(DWORD timeoutMs) {
+    // Nimmt der Bildschirm gerade ein neues Bild an? Nur dann zeichnen, sonst würde Present()
+    // blockieren und dabei die Grafikkarte für Decoder und virtuelle Kamera sperren.
+    // (Liegt das Fenster hinter einem Spiel, nimmt Windows Bilder nur noch zögerlich ab.)
+    return !m_frameLatencyWaitable || WaitForSingleObjectEx(m_frameLatencyWaitable, timeoutMs, TRUE) == WAIT_OBJECT_0;
+}
+
+bool UiHost::Occluded() {
+    if (!m_occluded) return false;
+    // Ab und zu nachsehen, ob das Fenster wieder sichtbar ist (zeichnet nichts).
+    const ULONGLONG now = GetTickCount64();
+    if (now - m_lastOcclusionTest >= 250) {
+        m_lastOcclusionTest = now;
+        if (m_swapChain->Present(0, DXGI_PRESENT_TEST) == S_OK) m_occluded = false;
+    }
+    return m_occluded;
+}
+
 void UiHost::BeginFrame() {
-    // Erst warten, bis der Bildschirm ein neues Bild annimmt (sperrt nichts), dann zeichnen.
-    if (m_frameLatencyWaitable) WaitForSingleObjectEx(m_frameLatencyWaitable, 100, TRUE);
     ImGui_ImplDX11_NewFrame();
     ImGui_ImplWin32_NewFrame();
     if (!pendingInput.empty()) {
@@ -223,7 +239,14 @@ void UiHost::EndFrame(bool present, bool vsync) {
     // Kopfzeile dieses Bildes gilt ab jetzt für die Treffer-Prüfung des Fensters.
     m_hotRects.swap(m_nextHotRects);
     m_captionHeight = m_nextCaptionHeight;
-    if (present) m_swapChain->Present(vsync ? 1 : 0, 0);
+    if (present) {
+        const HRESULT hr = m_swapChain->Present(vsync ? 1 : 0, 0);
+        // Ganz verdeckt (z. B. hinter einem Spiel im Vollbild): nicht weiter zeichnen.
+        if (hr == DXGI_STATUS_OCCLUDED) {
+            m_occluded = true;
+            m_lastOcclusionTest = GetTickCount64();
+        }
+    }
 }
 
 void UiHost::AddCaptionHotRect(ImVec2 min, ImVec2 max) {

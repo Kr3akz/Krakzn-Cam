@@ -529,7 +529,7 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand) {
                 if (!host.ProcessMessages(&hadInput)) break;
                 if (hadInput) extraFrames = 2;
                 if (app.WantsClose()) break;
-                if (host.Minimized()) continue;
+                if (host.Minimized() || host.Occluded() || !host.ReadyForFrame(20)) continue;
                 host.BeginFrame();
                 app.Draw();
                 host.EndFrame(true);
