@@ -17,9 +17,9 @@ std::wstring DefaultLogPath() {
     std::wstring path;
     if (SUCCEEDED(SHGetKnownFolderPath(FOLDERID_LocalAppData, 0, nullptr, &folder))) {
         path = folder;
-        path += L"\\KabelCam";
+        path += L"\\KrakznCam";
         CreateDirectoryW(path.c_str(), nullptr);
-        path += L"\\kabelcam.log";
+        path += L"\\krakzncam.log";
     }
     CoTaskMemFree(folder);
     return path;

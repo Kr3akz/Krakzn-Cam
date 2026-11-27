@@ -21,7 +21,7 @@ struct SetupReport {
     DWORD windowsBuild = 0;
 };
 
-// Prüft, was für KabelCam und Sideloadly installiert ist. Liest nur die Registry
+// Prüft, was für KrakznCam und Sideloadly installiert ist. Liest nur die Registry
 // und den Dienststatus, dauert wenige Millisekunden.
 SetupReport RunSetupCheck();
 

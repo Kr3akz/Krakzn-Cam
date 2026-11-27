@@ -17,8 +17,8 @@ SOCKET OpenService() {
 PlistDictWriter BaseRequest(const char* messageType) {
     PlistDictWriter writer;
     writer.AddString("MessageType", messageType);
-    writer.AddString("ClientVersionString", "kabelcam");
-    writer.AddString("ProgName", "kabelcam");
+    writer.AddString("ClientVersionString", "krakzncam");
+    writer.AddString("ProgName", "krakzncam");
     return writer;
 }
 

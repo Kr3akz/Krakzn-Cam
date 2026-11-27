@@ -1,4 +1,4 @@
-# KabelCam-Protokoll (Version 1)
+# KrakznCam-Protokoll (Version 1)
 
 So reden die iPhone-App und das Windows-Programm miteinander.
 
@@ -11,7 +11,7 @@ So reden die iPhone-App und das Windows-Programm miteinander.
   - Der PC verbindet sich mit 27015 und schickt eine `Connect`-Anfrage mit
     `DeviceID` und Port 7878.
   - Danach ist der Socket ein normaler TCP-Tunnel zur App.
-  - Eine Beispiel-Implementierung steht in `tools/kabelcam_test.py`.
+  - Eine Beispiel-Implementierung steht in `tools/krakzncam_test.py`.
 - Es wird immer nur ein PC gleichzeitig bedient.
 
 ## Nachrichtenrahmen
@@ -34,7 +34,7 @@ Verbindungsaufbau als erste Nachricht und erneut nach jeder Änderung der Einste
 ```json
 {
   "version": 1,
-  "app": "KabelCam",
+  "app": "KrakznCam",
   "codec": "h264",
   "width": 1920,
   "height": 1080,

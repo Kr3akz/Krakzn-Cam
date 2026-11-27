@@ -173,7 +173,7 @@ struct SettingsPanel: View {
             }
 
             Section("So geht's") {
-                Text("1. iPhone per Kabel mit dem PC verbinden\n2. KabelCam auf dem PC starten\n3. In Zoom, Teams usw. die Kamera „KabelCam“ wählen\n\nDie App muss dafür geöffnet bleiben.")
+                Text("1. iPhone per Kabel mit dem PC verbinden\n2. KrakznCam auf dem PC starten\n3. In Zoom, Teams usw. die Kamera „KrakznCam“ wählen\n\nDie App muss dafür geöffnet bleiben.")
                     .font(.footnote)
                     .foregroundStyle(.secondary)
             }
@@ -265,7 +265,7 @@ struct PermissionHint: View {
                 .font(.system(size: 44))
             Text("Kein Zugriff auf die Kamera")
                 .font(.title3.bold())
-            Text("Erlaube KabelCam den Kamerazugriff in den Einstellungen.")
+            Text("Erlaube KrakznCam den Kamerazugriff in den Einstellungen.")
                 .foregroundStyle(.secondary)
             Button("Einstellungen öffnen") {
                 if let url = URL(string: UIApplication.openSettingsURLString) {

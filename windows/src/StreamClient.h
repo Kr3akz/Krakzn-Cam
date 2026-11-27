@@ -17,7 +17,7 @@ struct StreamStatus {
         Starting,
         NoAppleService,   // Apple Mobile Device Service nicht erreichbar
         NoDevice,         // kein iPhone per USB
-        AppNotReachable,  // iPhone da, aber KabelCam-App lauscht nicht
+        AppNotReachable,  // iPhone da, aber KrakznCam-App lauscht nicht
         Connected,        // verbunden, noch kein Bild
         Streaming,        // Bilder kommen an
     };

@@ -121,7 +121,7 @@ SOCKET StreamClient::OpenConnection() {
         m_status.deviceSerial = usb->serial;
     }
     int result = -1;
-    SOCKET s = Usbmux::Connect(usb->id, KabelCam::kPort, result);
+    SOCKET s = Usbmux::Connect(usb->id, KrakznCam::kPort, result);
     if (s == INVALID_SOCKET) {
         SetState(StreamStatus::State::AppNotReachable,
                  result == 3 || result == -1 ? std::string() : "usbmux-Fehler " + std::to_string(result));
@@ -171,7 +171,7 @@ void StreamClient::Serve(SOCKET s) {
         std::lock_guard lock(m_mutex);
         m_status.hardwareDecoding = decoder.IsHardware();
     }
-    KabelCam::SendCommand(s, "{\"cmd\":\"keyframe\"}");
+    KrakznCam::SendCommand(s, "{\"cmd\":\"keyframe\"}");
 
     uint8_t type = 0;
     std::vector<uint8_t> payload;
@@ -180,11 +180,11 @@ void StreamClient::Serve(SOCKET s) {
     uint64_t windowFrames = 0;
     uint64_t windowBytes = 0;
 
-    while (m_running && KabelCam::ReadMessage(s, type, payload)) {
-        if (type == KabelCam::kMsgHello) {
+    while (m_running && KrakznCam::ReadMessage(s, type, payload)) {
+        if (type == KrakznCam::kMsgHello) {
             HandleHello(payload);
-        } else if (type == KabelCam::kMsgVideoFrame && payload.size() > 9) {
-            int64_t pts = static_cast<int64_t>(KabelCam::ReadBE64(payload.data()));
+        } else if (type == KrakznCam::kMsgVideoFrame && payload.size() > 9) {
+            int64_t pts = static_cast<int64_t>(KrakznCam::ReadBE64(payload.data()));
             const uint8_t* data = payload.data() + 9;
             size_t size = payload.size() - 9;
             windowBytes += size;
@@ -208,7 +208,7 @@ void StreamClient::Serve(SOCKET s) {
             // Nach einem Fehler höchstens einmal pro Sekunde einen neuen Keyframe anfordern.
             if (!ok && Clock::now() - lastKeyframeRequest > std::chrono::seconds(1)) {
                 lastKeyframeRequest = Clock::now();
-                KabelCam::SendCommand(s, "{\"cmd\":\"keyframe\"}");
+                KrakznCam::SendCommand(s, "{\"cmd\":\"keyframe\"}");
             }
         }
 

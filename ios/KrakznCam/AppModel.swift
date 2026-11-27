@@ -22,7 +22,7 @@ final class AppModel: ObservableObject {
     let availableLenses: [CameraLens]
     let camera = CameraCapture()
     private let encoder = H264Encoder()
-    private let server = StreamServer(port: KabelCamProtocol.port)
+    private let server = StreamServer(port: KrakznCamProtocol.port)
     private var started = false
     private var observers: [NSObjectProtocol] = []
 
@@ -121,8 +121,8 @@ final class AppModel: ObservableObject {
     private static func helloInfo(for settings: StreamSettings) -> [String: Any] {
         let size = settings.resolution.size
         var info: [String: Any] = [
-            "version": KabelCamProtocol.version,
-            "app": "KabelCam",
+            "version": KrakznCamProtocol.version,
+            "app": "KrakznCam",
             "codec": "h264",
             "width": Int(size.width),
             "height": Int(size.height),

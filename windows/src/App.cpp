@@ -73,7 +73,7 @@ StateText Describe(const StreamStatus& status) {
     case State::Starting: return {"Startet …", "", "Startet", Tone::Neutral};
     case State::NoAppleService:
         return {"Apple-USB-Dienst fehlt",
-                "Ohne ihn erreicht KabelCam das iPhone nicht. Er kommt mit iTunes, den Download findest du unter "
+                "Ohne ihn erreicht KrakznCam das iPhone nicht. Er kommt mit iTunes, den Download findest du unter "
                 "Einrichtung.",
                 "USB-Dienst fehlt", Tone::Bad};
     case State::NoDevice:
@@ -81,9 +81,9 @@ StateText Describe(const StreamStatus& status) {
                 "Schließ das iPhone per Kabel an, entsperre es und bestätige „Diesem Computer vertrauen“.",
                 "Kein iPhone", Tone::Warn};
     case State::AppNotReachable:
-        if (status.direct) return {"Testquelle nicht erreichbar", "Starte kabelcam_fakephone.exe.", "Keine Quelle", Tone::Warn};
-        return {"KabelCam öffnen",
-                "Das iPhone ist angeschlossen. Öffne jetzt die KabelCam-App, sie muss im Vordergrund bleiben.",
+        if (status.direct) return {"Testquelle nicht erreichbar", "Starte krakzncam_fakephone.exe.", "Keine Quelle", Tone::Warn};
+        return {"KrakznCam öffnen",
+                "Das iPhone ist angeschlossen. Öffne jetzt die KrakznCam-App, sie muss im Vordergrund bleiben.",
                 "App öffnen", Tone::Warn};
     case State::Connected: return {"Verbunden", "Warte auf das erste Bild …", "Verbunden", Tone::Neutral};
     case State::Streaming: return {"Überträgt", "", "Live", Tone::Ok};
@@ -188,7 +188,7 @@ void App::Draw() {
     ImGui::SetNextWindowSize(size);
     ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0.0f, 0.0f));
     ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 0.0f);
-    ImGui::Begin("KabelCam", nullptr,
+    ImGui::Begin("KrakznCam", nullptr,
                  ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoSavedSettings |
                      ImGuiWindowFlags_NoBringToFrontOnFocus | ImGuiWindowFlags_NoBackground |
                      ImGuiWindowFlags_NoScrollWithMouse);
@@ -442,7 +442,7 @@ void App::DrawSteps(ImDrawList* dl, ImVec2 min, float width, float bottom) {
     const Fonts& fonts = GetFonts();
     const char* steps[] = {
         "iPhone per Kabel anschließen und entsperren",
-        "KabelCam-App auf dem iPhone öffnen",
+        "KrakznCam-App auf dem iPhone öffnen",
         "Das Bild erscheint links in der Vorschau",
     };
     const ImVec2 padding(Px(24.0f), Px(22.0f));
@@ -498,16 +498,7 @@ void App::DrawSetupPage(ImVec2 min, ImVec2 max) {
     const float titleSize = Px(17.0f);
     const float descSize = Px(13.5f);
 
-    // Liste: Einrichtungspunkte plus ein Hinweis auf die virtuelle Kamera.
-    std::vector<SetupItem> items = m_setup.items;
-    {
-        SetupItem camera;
-        camera.key = "camera";
-        camera.status = SetupItem::Status::Info;
-        camera.title = "Virtuelle Kamera";
-        camera.detail = "Kommt mit dem nächsten Update. Dann erscheint „KabelCam“ als Kamera in OBS, Zoom, Discord und Co.";
-        items.push_back(camera);
-    }
+    const std::vector<SetupItem>& items = m_setup.items;
     auto trailingWidth = [&](const SetupItem& item) {
         if (!item.actionLabel.empty()) return ButtonWidth(item.actionLabel, Icon::OpenExternal, ButtonSize::Small);
         if (item.status == SetupItem::Status::Ok) return ChipWidth("Bereit", false);
@@ -542,7 +533,7 @@ void App::DrawSetupPage(ImVec2 min, ImVec2 max) {
          open == 0 ? Tone::Ok : Tone::Warn, true);
     y += titleHeight + Px(4.0f);
     Text(dl, fonts.light, Px(15.0f), ImVec2(sheetX + padding.x, y), kText2,
-         "Was KabelCam und Sideloadly auf diesem PC brauchen.");
+         "Was KrakznCam und Sideloadly auf diesem PC brauchen.");
     y += subHeight + Px(16.0f);
 
     for (size_t i = 0; i < items.size(); ++i) {
@@ -555,11 +546,7 @@ void App::DrawSetupPage(ImVec2 min, ImVec2 max) {
         const ItemLook look = LookFor(item);
         const ImVec2 iconMin(listLeft + Px(12.0f), y + (height - iconBox) * 0.5f);
         dl->AddRectFilled(iconMin, iconMin + ImVec2(iconBox, iconBox), A(IM_COL32(0, 0, 0, 90)), Px(7.0f));
-        if (item.key == "camera") {
-            DrawIcon(dl, Icon::Camera, iconMin + ImVec2(iconBox, iconBox) * 0.5f, Px(19.0f), look.color);
-        } else {
-            DrawIcon(dl, look.icon, iconMin + ImVec2(iconBox, iconBox) * 0.5f, Px(19.0f), look.color);
-        }
+        DrawIcon(dl, look.icon, iconMin + ImVec2(iconBox, iconBox) * 0.5f, Px(19.0f), look.color);
 
         const float trailing = trailingWidth(item);
         const float textWidth = listRight - Px(12.0f) - textX - (trailing > 0 ? trailing + Px(16.0f) : 0.0f);

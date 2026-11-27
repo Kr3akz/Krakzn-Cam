@@ -1,5 +1,5 @@
 # Baut das Windows-Programm in der Cloud. Niemand muss dafür Visual Studio installieren.
-# Ergebnis: Artefakt "KabelCam-Windows" mit kabelcam.exe und der Testquelle kabelcam_fakephone.exe.
+# Ergebnis: Artefakt "KrakznCam-Windows" mit krakzncam.exe und der Testquelle krakzncam_fakephone.exe.
 name: Windows-Programm bauen
 
 on:
@@ -26,11 +26,11 @@ jobs:
         shell: pwsh
         run: |
           New-Item -ItemType Directory -Force dist | Out-Null
-          Copy-Item build/Release/kabelcam.exe, build/Release/kabelcam_fakephone.exe dist/
+          Copy-Item build/Release/krakzncam.exe, build/Release/krakzncam_fakephone.exe dist/
           Get-ChildItem dist | Format-Table Name, Length
 
       - uses: actions/upload-artifact@v4
         with:
-          name: KabelCam-Windows
+          name: KrakznCam-Windows
           path: dist/
           if-no-files-found: error

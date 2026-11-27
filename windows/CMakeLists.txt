@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.24)
-project(KabelCam VERSION 0.1.0 LANGUAGES CXX)
+project(KrakznCam VERSION 0.1.0 LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -8,7 +8,7 @@ set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
 
 add_compile_options(/utf-8 /permissive- /EHsc /W4 /MP)
 add_compile_definitions(UNICODE _UNICODE WIN32_LEAN_AND_MEAN NOMINMAX IMGUI_DEFINE_MATH_OPERATORS
-    KABELCAM_VERSION="${PROJECT_VERSION}")
+    KRAKZNCAM_VERSION="${PROJECT_VERSION}")
 
 # Dear ImGui für die Oberfläche (klein, schnell, ohne Laufzeit-Abhängigkeiten).
 # 1.92 rendert Schrift in jeder Größe scharf – wichtig für die großen, dünnen Titel.
@@ -30,7 +30,7 @@ target_include_directories(imgui PUBLIC ${imgui_SOURCE_DIR} ${imgui_SOURCE_DIR}/
 set_target_properties(imgui PROPERTIES COMPILE_WARNING_AS_ERROR OFF)
 
 # Gemeinsamer Kern: USB-Tunnel, Protokoll, Decoder.
-add_library(kabelcam_core STATIC
+add_library(krakzncam_core STATIC
     src/FrameStore.cpp
     src/H264Decoder.cpp
     src/Json.cpp
@@ -42,12 +42,12 @@ add_library(kabelcam_core STATIC
     src/StreamClient.cpp
     src/Usbmux.cpp
     src/VideoView.cpp)
-target_include_directories(kabelcam_core PUBLIC src)
-target_link_libraries(kabelcam_core PUBLIC
+target_include_directories(krakzncam_core PUBLIC src)
+target_link_libraries(krakzncam_core PUBLIC
     ws2_32 d3d11 dxgi mfplat mfuuid wmcodecdspuuid windowscodecs ole32 shell32 advapi32)
 
-add_executable(kabelcam WIN32 src/main.cpp src/App.cpp src/Theme.cpp)
-target_link_libraries(kabelcam PRIVATE kabelcam_core imgui d3dcompiler dwmapi)
+add_executable(krakzncam WIN32 src/main.cpp src/App.cpp src/Theme.cpp)
+target_link_libraries(krakzncam PRIVATE krakzncam_core imgui d3dcompiler dwmapi)
 
-add_executable(kabelcam_fakephone tools/fakephone.cpp)
-target_link_libraries(kabelcam_fakephone PRIVATE kabelcam_core winmm)
+add_executable(krakzncam_fakephone tools/fakephone.cpp tools/TestScene.cpp)
+target_link_libraries(krakzncam_fakephone PRIVATE krakzncam_core winmm d2d1 dwrite)

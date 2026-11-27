@@ -5,8 +5,8 @@
 #include <string>
 #include <vector>
 
-// KabelCam-Protokoll, siehe docs/protokoll.md
-namespace KabelCam {
+// KrakznCam-Protokoll, siehe docs/protokoll.md
+namespace KrakznCam {
 
 constexpr uint16_t kPort = 7878;
 constexpr uint8_t kMsgHello = 0x01;
@@ -58,4 +58,4 @@ inline bool SendCommand(SOCKET s, const std::string& json) {
     return SendAll(s, message.data(), message.size());
 }
 
-}  // namespace KabelCam
+}  // namespace KrakznCam

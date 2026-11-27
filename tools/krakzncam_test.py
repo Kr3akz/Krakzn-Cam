@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 """
-KabelCam-Testprogramm: prüft die USB-Verbindung zur iPhone-App, ohne die Windows-App.
+KrakznCam-Testprogramm: prüft die USB-Verbindung zur iPhone-App, ohne die Windows-App.
 
-  py tools\\kabelcam_test.py --list                         verbundene iPhones anzeigen
-  py tools\\kabelcam_test.py                                Stream empfangen, Statistik anzeigen
-  py tools\\kabelcam_test.py --save test.h264 --seconds 10  Rohvideo speichern (z. B. mit VLC abspielen)
+  py tools\\krakzncam_test.py --list                         verbundene iPhones anzeigen
+  py tools\\krakzncam_test.py                                Stream empfangen, Statistik anzeigen
+  py tools\\krakzncam_test.py --save test.h264 --seconds 10  Rohvideo speichern (z. B. mit VLC abspielen)
 
 Braucht nur Python 3.8+ und den „Apple Mobile Device Service“ (kommt mit iTunes bzw. „Apple Geräte“).
 Protokoll: docs/protokoll.md
@@ -18,7 +18,7 @@ import sys
 import time
 
 USBMUX_ADDRESS = ("127.0.0.1", 27015)
-KABELCAM_PORT = 7878
+KRAKZNCAM_PORT = 7878
 
 MSG_HELLO = 0x01
 MSG_VIDEO_FRAME = 0x02
@@ -28,12 +28,12 @@ MSG_COMMAND = 0x10
 USBMUX_RESULTS = {
     0: "OK",
     2: "Gerät nicht gefunden",
-    3: "Verbindung abgelehnt: KabelCam läuft nicht oder ist nicht im Vordergrund",
+    3: "Verbindung abgelehnt: KrakznCam läuft nicht oder ist nicht im Vordergrund",
     6: "Falsche Protokollversion",
 }
 
 
-class KabelCamError(Exception):
+class KrakznCamError(Exception):
     pass
 
 
@@ -61,8 +61,8 @@ def usbmux_request(sock, payload, tag=1):
 def usbmux_base(message_type):
     return {
         "MessageType": message_type,
-        "ClientVersionString": "kabelcam-test",
-        "ProgName": "kabelcam-test",
+        "ClientVersionString": "krakzncam-test",
+        "ProgName": "krakzncam-test",
     }
 
 
@@ -70,7 +70,7 @@ def open_usbmux():
     try:
         return socket.create_connection(USBMUX_ADDRESS, timeout=5)
     except OSError as error:
-        raise KabelCamError(
+        raise KrakznCamError(
             "Apple Mobile Device Service nicht erreichbar (127.0.0.1:27015). "
             "Ist iTunes bzw. „Apple Geräte“ installiert?"
         ) from error
@@ -100,7 +100,7 @@ def connect_to_device(device_id, port):
     number = reply.get("Number", -1)
     if reply.get("MessageType") != "Result" or number != 0:
         sock.close()
-        raise KabelCamError(f"usbmux: {USBMUX_RESULTS.get(number, f'Fehler {number}')}")
+        raise KrakznCamError(f"usbmux: {USBMUX_RESULTS.get(number, f'Fehler {number}')}")
     sock.settimeout(10)
     return sock  # ab jetzt ein direkter TCP-Tunnel zur App
 
@@ -108,14 +108,14 @@ def connect_to_device(device_id, port):
 def pick_usb_device():
     devices = [d for d in list_devices() if d["connection"] == "USB"]
     if not devices:
-        raise KabelCamError(
+        raise KrakznCamError(
             "Kein iPhone per USB gefunden. Kabel prüfen, iPhone entsperren und "
             "„Diesem Computer vertrauen“ bestätigen."
         )
     return devices[0]
 
 
-# --------------------------------------------------------------------------- KabelCam-Protokoll
+# --------------------------------------------------------------------------- KrakznCam-Protokoll
 
 def send_command(sock, command):
     payload = json.dumps(command).encode("utf-8")
@@ -125,7 +125,7 @@ def send_command(sock, command):
 def read_message(sock):
     (length,) = struct.unpack(">I", recv_exact(sock, 4))
     if length < 1 or length > 64 * 1024 * 1024:
-        raise KabelCamError(f"Ungültige Nachrichtenlänge {length}")
+        raise KrakznCamError(f"Ungültige Nachrichtenlänge {length}")
     body = recv_exact(sock, length)
     return body[0], body[1:]
 
@@ -184,11 +184,11 @@ def receive_stream(sock, seconds, save_path):
 
 
 def main():
-    parser = argparse.ArgumentParser(description="KabelCam-Verbindung über USB testen")
+    parser = argparse.ArgumentParser(description="KrakznCam-Verbindung über USB testen")
     parser.add_argument("--list", action="store_true", help="verbundene Geräte anzeigen und beenden")
     parser.add_argument("--seconds", type=float, default=0, help="nach so vielen Sekunden beenden (0 = nie)")
     parser.add_argument("--save", metavar="DATEI", help="H.264-Rohdaten in diese Datei schreiben")
-    parser.add_argument("--port", type=int, default=KABELCAM_PORT, help="Port der App auf dem iPhone")
+    parser.add_argument("--port", type=int, default=KRAKZNCAM_PORT, help="Port der App auf dem iPhone")
     parser.add_argument("--direct", metavar="HOST:PORT", help="ohne usbmux direkt verbinden (nur zum Entwickeln)")
     args = parser.parse_args()
 
@@ -215,7 +215,7 @@ def main():
             frames = receive_stream(sock, args.seconds, args.save)
         print(f"Fertig, {frames} Frames empfangen.")
         return 0 if frames > 0 else 1
-    except KabelCamError as error:
+    except KrakznCamError as error:
         print(f"Fehler: {error}", file=sys.stderr)
         return 2
     except (ConnectionError, socket.timeout) as error:

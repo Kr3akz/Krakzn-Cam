@@ -1,5 +1,5 @@
 # Baut die iPhone-App auf einem Mac in der Cloud (ohne Signatur).
-# Ergebnis: KabelCam-unsigned.ipa als Artefakt. Installieren mit Sideloadly (signiert mit deiner Apple-ID).
+# Ergebnis: KrakznCam-unsigned.ipa als Artefakt. Installieren mit Sideloadly (signiert mit deiner Apple-ID).
 name: iPhone-App bauen
 
 on:
@@ -32,8 +32,8 @@ jobs:
           set -o pipefail
           xcodebuild \
             -quiet \
-            -project KabelCam.xcodeproj \
-            -scheme KabelCam \
+            -project KrakznCam.xcodeproj \
+            -scheme KrakznCam \
             -configuration Release \
             -sdk iphoneos \
             -destination 'generic/platform=iOS' \
@@ -47,11 +47,11 @@ jobs:
         working-directory: ios
         run: |
           mkdir -p Payload
-          cp -R build/Build/Products/Release-iphoneos/KabelCam.app Payload/
-          zip -qry KabelCam-unsigned.ipa Payload
+          cp -R build/Build/Products/Release-iphoneos/KrakznCam.app Payload/
+          zip -qry KrakznCam-unsigned.ipa Payload
 
       - uses: actions/upload-artifact@v4
         with:
-          name: KabelCam-ipa
-          path: ios/KabelCam-unsigned.ipa
+          name: KrakznCam-ipa
+          path: ios/KrakznCam-unsigned.ipa
           if-no-files-found: error

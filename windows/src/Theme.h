@@ -1,5 +1,5 @@
 #pragma once
-// KabelCams Formensprache, angelehnt an Eidolon: Flächen trennen sich durch Helligkeit
+// KrakznCams Formensprache, angelehnt an Eidolon: Flächen trennen sich durch Helligkeit
 // statt durch Linien, Tiefe entsteht durch Schatten. Farben neutral – Schwarz, Grautöne,
 // Weiß für Fokus und Hover, Blau nur für Fortschritt.
 

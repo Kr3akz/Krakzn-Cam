@@ -1,8 +1,8 @@
 # XcodeGen-Projektbeschreibung. Daraus wird auf dem Mac in der Cloud das Xcode-Projekt erzeugt:
 #   xcodegen generate
-name: KabelCam
+name: KrakznCam
 options:
-  bundleIdPrefix: de.kabelcam
+  bundleIdPrefix: de.krakzncam
   deploymentTarget:
     iOS: "16.0"
 settings:
@@ -11,21 +11,21 @@ settings:
     MARKETING_VERSION: "0.1.0"
     CURRENT_PROJECT_VERSION: "1"
 targets:
-  KabelCam:
+  KrakznCam:
     type: application
     platform: iOS
     sources:
-      - path: KabelCam
+      - path: KrakznCam
     settings:
       base:
-        PRODUCT_BUNDLE_IDENTIFIER: de.kabelcam.KabelCam
+        PRODUCT_BUNDLE_IDENTIFIER: de.krakzncam.KrakznCam
         INFOPLIST_FILE: Support/Info.plist
         TARGETED_DEVICE_FAMILY: "1"
 schemes:
-  KabelCam:
+  KrakznCam:
     build:
       targets:
-        KabelCam: all
+        KrakznCam: all
     run:
       config: Debug
     archive:

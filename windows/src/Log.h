@@ -5,5 +5,5 @@
 void LogInit(const std::wstring& path);
 void LogLine(const char* format, ...);
 
-// %LOCALAPPDATA%\KabelCam\kabelcam.log
+// %LOCALAPPDATA%\KrakznCam\krakzncam.log
 std::wstring DefaultLogPath();

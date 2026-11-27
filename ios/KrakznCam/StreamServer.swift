@@ -29,7 +29,7 @@ final class StreamServer {
     private var helloInfo: [String: Any] = [:]
     /// Wie viele Frames höchstens auf das Senden warten dürfen, bevor verworfen wird.
     private let maxQueuedFrames = 3
-    private let sendQueue = DispatchQueue(label: "KabelCam.send", qos: .userInteractive)
+    private let sendQueue = DispatchQueue(label: "KrakznCam.send", qos: .userInteractive)
 
     init(port: UInt16) {
         self.port = port
@@ -47,7 +47,7 @@ final class StreamServer {
         guard !started else { return }
         started = true
         let thread = Thread { [weak self] in self?.serverLoop() }
-        thread.name = "KabelCam.Server"
+        thread.name = "KrakznCam.Server"
         thread.qualityOfService = .userInitiated
         thread.start()
     }
@@ -167,7 +167,7 @@ final class StreamServer {
         while buffer.count >= 4 {
             let header = [UInt8](buffer.prefix(4))
             let length = Int(header[0]) << 24 | Int(header[1]) << 16 | Int(header[2]) << 8 | Int(header[3])
-            guard length >= 1, length <= KabelCamProtocol.maxIncomingMessage else { return false }
+            guard length >= 1, length <= KrakznCamProtocol.maxIncomingMessage else { return false }
             guard buffer.count >= 4 + length else { return true }
             let message = [UInt8](buffer.prefix(4 + length))
             buffer.removeFirst(4 + length)

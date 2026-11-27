@@ -1,7 +1,7 @@
 import Foundation
 
-/// Gemeinsame Konstanten des KabelCam-Protokolls. Beschreibung: docs/protokoll.md
-enum KabelCamProtocol {
+/// Gemeinsame Konstanten des KrakznCam-Protokolls. Beschreibung: docs/protokoll.md
+enum KrakznCamProtocol {
     /// TCP-Port der App. Sie lauscht nur auf 127.0.0.1 und ist dadurch nur über USB (usbmux) erreichbar.
     static let port: UInt16 = 7878
     static let version = 1

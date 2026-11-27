@@ -1,10 +1,10 @@
-// KabelCam für Windows: empfängt das iPhone-Bild per USB und zeigt es an.
+// KrakznCam für Windows: empfängt das iPhone-Bild per USB und zeigt es an.
 //
 // Aufruf:
-//   kabelcam.exe                               normaler Start
-//   kabelcam.exe --direct 127.0.0.1:17878      Testquelle statt iPhone (kabelcam_fakephone.exe)
-//   kabelcam.exe --check --log datei.txt       nur Einrichtung prüfen und ins Protokoll schreiben
-//   kabelcam.exe --selftest --frames 60 --snapshot bild.png --screenshot ui.png --log datei.txt
+//   krakzncam.exe                               normaler Start
+//   krakzncam.exe --direct 127.0.0.1:17878      Testquelle statt iPhone (krakzncam_fakephone.exe)
+//   krakzncam.exe --check --log datei.txt       nur Einrichtung prüfen und ins Protokoll schreiben
+//   krakzncam.exe --selftest --frames 60 --snapshot bild.png --screenshot ui.png --log datei.txt
 //                                              unsichtbar laufen, bis N Bilder dekodiert sind, dann speichern
 
 #include "App.h"
@@ -314,7 +314,7 @@ int RunSelftest(App& app, StreamClient& client, HANDLE frameEvent, const Options
 int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand) {
     const Options options = ParseOptions();
     LogInit(options.logPath.empty() ? DefaultLogPath() : options.logPath);
-    LogLine("KabelCam %s startet", KABELCAM_VERSION);
+    LogLine("KrakznCam %s startet", KRAKZNCAM_VERSION);
 
     CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
     MFStartup(MF_VERSION);
@@ -334,7 +334,7 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand) {
 
     ImGui_ImplWin32_EnableDpiAwareness();
     if (!CreateDevice()) {
-        MessageBoxW(nullptr, L"Die Grafik konnte nicht gestartet werden.", L"KabelCam", MB_ICONERROR);
+        MessageBoxW(nullptr, L"Die Grafik konnte nicht gestartet werden.", L"KrakznCam", MB_ICONERROR);
         return 1;
     }
 
@@ -345,7 +345,7 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand) {
     windowClass.hInstance = instance;
     windowClass.hCursor = LoadCursorW(nullptr, IDC_ARROW);
     windowClass.hbrBackground = CreateSolidBrush(RGB(11, 11, 13));  // kein weißes Aufblitzen beim Vergrößern
-    windowClass.lpszClassName = L"KabelCamWindow";
+    windowClass.lpszClassName = L"KrakznCamWindow";
     RegisterClassExW(&windowClass);
 
     float scale = options.selftest
@@ -353,10 +353,10 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand) {
                       : ImGui_ImplWin32_GetDpiScaleForMonitor(MonitorFromPoint(POINT{0, 0}, MONITOR_DEFAULTTOPRIMARY));
     const int width = options.selftest ? 1280 : static_cast<int>(1200 * scale);
     const int height = options.selftest ? 760 : static_cast<int>(740 * scale);
-    HWND hwnd = CreateWindowExW(0, windowClass.lpszClassName, L"KabelCam", WS_OVERLAPPEDWINDOW, CW_USEDEFAULT,
+    HWND hwnd = CreateWindowExW(0, windowClass.lpszClassName, L"KrakznCam", WS_OVERLAPPEDWINDOW, CW_USEDEFAULT,
                                 CW_USEDEFAULT, width, height, nullptr, nullptr, instance, nullptr);
     if (!hwnd || !CreateSwapChain(hwnd)) {
-        MessageBoxW(nullptr, L"Das Fenster konnte nicht erstellt werden.", L"KabelCam", MB_ICONERROR);
+        MessageBoxW(nullptr, L"Das Fenster konnte nicht erstellt werden.", L"KrakznCam", MB_ICONERROR);
         return 1;
     }
     StyleTitleBar(hwnd);
@@ -391,6 +391,6 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand) {
     UnregisterClassW(windowClass.lpszClassName, instance);
     MFShutdown();
     CoUninitialize();
-    LogLine("KabelCam beendet (Code %d)", exitCode);
+    LogLine("KrakznCam beendet (Code %d)", exitCode);
     return exitCode;
 }

@@ -185,32 +185,35 @@ SetupReport RunSetupCheck() {
     const std::vector<std::wstring> packages = ListStorePackages();
 
     // Windows-Version: Die virtuelle Kamera braucht Windows 11 (Build 22000+).
+    // Nur erwähnen, wenn es ein Problem ist.
     report.windowsBuild = WindowsBuild();
-    {
+    if (report.windowsBuild > 0 && report.windowsBuild < 22000) {
         SetupItem item;
         item.key = "windows";
-        item.title = "Windows";
-        if (report.windowsBuild >= 22000) {
-            item.status = SetupItem::Status::Ok;
-            item.detail = "Windows 11 (Build " + std::to_string(report.windowsBuild) + ")";
-        } else {
-            item.status = SetupItem::Status::Warning;
-            item.detail = "Die virtuelle Kamera braucht Windows 11.";
-        }
+        item.title = "Windows 11";
+        item.status = SetupItem::Status::Warning;
+        item.detail = "Die virtuelle Kamera braucht Windows 11. Die Vorschau funktioniert trotzdem.";
         report.items.push_back(item);
     }
 
-    // iTunes (Web-Version). Bringt den USB-Treiber mit.
+    // iTunes (Web-Version). Bringt den USB-Treiber samt Apple-USB-Dienst mit, deshalb ein Punkt.
     const InstalledApp* iTunes = FindApp(apps, [](const std::wstring& n) { return n == L"iTunes"; });
     const bool iTunesStore = HasPackage(packages, L"AppleInc.iTunes_");
+    const ServiceState usbService = QueryServiceState(L"Apple Mobile Device Service");
     bool iTunesOk = false;
     {
         SetupItem item;
         item.key = "itunes";
         item.title = "iTunes (Web-Version)";
-        if (iTunes) {
+        if (iTunes && usbService == ServiceState::Running) {
             item.status = SetupItem::Status::Ok;
-            item.detail = "Version " + Utf8(iTunes->version);
+            item.detail = "Version " + Utf8(iTunes->version) + ", USB-Treiber läuft";
+            iTunesOk = true;
+        } else if (iTunes) {
+            item.status = SetupItem::Status::Warning;
+            item.detail = "Installiert, aber der Apple-USB-Dienst läuft nicht. Ein Neustart des PCs hilft meistens.";
+            item.actionLabel = "Dienste öffnen";
+            item.actionTarget = L"services.msc";
             iTunesOk = true;
         } else if (iTunesStore) {
             item.status = SetupItem::Status::Warning;
@@ -220,7 +223,7 @@ SetupReport RunSetupCheck() {
             item.actionTarget = kAppsSettings;
         } else {
             item.status = SetupItem::Status::Missing;
-            item.detail = "Wird von Sideloadly gebraucht und bringt den USB-Treiber mit.";
+            item.detail = "Bringt den USB-Treiber mit und wird von Sideloadly gebraucht.";
             item.actionLabel = "iTunes herunterladen";
             item.actionTarget = kITunesUrl;
         }
@@ -256,29 +259,6 @@ SetupReport RunSetupCheck() {
         report.items.push_back(item);
     }
 
-    // USB-Treiber und Dienst (kommen mit iTunes).
-    {
-        SetupItem item;
-        item.key = "usb";
-        item.title = "Apple-USB-Dienst";
-        switch (QueryServiceState(L"Apple Mobile Device Service")) {
-        case ServiceState::Running:
-            item.status = SetupItem::Status::Ok;
-            item.detail = "Läuft. Darüber spricht KabelCam per Kabel mit dem iPhone.";
-            break;
-        case ServiceState::Stopped:
-            item.status = SetupItem::Status::Warning;
-            item.detail = "Installiert, läuft aber nicht. Neustart des PCs hilft meistens.";
-            item.actionLabel = "Dienste öffnen";
-            item.actionTarget = L"services.msc";
-            break;
-        case ServiceState::Missing:
-            item.status = SetupItem::Status::Missing;
-            item.detail = "Wird zusammen mit iTunes installiert.";
-            break;
-        }
-        report.items.push_back(item);
-    }
 
     // Sideloadly
     const InstalledApp* sideloadly = FindApp(apps, [](const std::wstring& n) { return Contains(n, L"Sideloadly"); });
@@ -296,7 +276,7 @@ SetupReport RunSetupCheck() {
             }
         } else {
             item.status = SetupItem::Status::Missing;
-            item.detail = "Bringt die KabelCam-App auf das iPhone.";
+            item.detail = "Bringt die KrakznCam-App auf das iPhone.";
             item.actionLabel = "Sideloadly herunterladen";
             item.actionTarget = kSideloadlyUrl;
         }

@@ -1,13 +1,15 @@
-// KabelCam-Testquelle: tut so, als wäre sie die iPhone-App (Protokoll: docs/protokoll.md).
-// Kodiert ein bewegtes Testbild mit dem H.264-Encoder von Windows und sendet es auf 127.0.0.1.
+// KrakznCam-Testquelle: tut so, als wäre sie die iPhone-App (Protokoll: docs/protokoll.md).
+// Kodiert ein bewegtes Testbild im Stil der App (TestScene) mit dem H.264-Encoder von Windows
+// und sendet es auf 127.0.0.1.
 //
-//   kabelcam_fakephone.exe [--port 17878] [--width 1920] [--height 1080] [--fps 30]
+//   krakzncam_fakephone.exe [--port 17878] [--width 1920] [--height 1080] [--fps 30]
 //                          [--bitrate 12000000] [--seconds 0]
 //
-// Danach: kabelcam.exe --direct 127.0.0.1:17878
+// Danach: krakzncam.exe --direct 127.0.0.1:17878
 
 #include "Net.h"
 #include "StreamProtocol.h"
+#include "TestScene.h"
 
 #include <windows.h>
 #include <mfapi.h>
@@ -197,58 +199,8 @@ private:
     std::vector<uint8_t> m_sequenceHeader;
 };
 
-// Farbbalken (BT.709, Videobereich) mit einem wandernden weißen Block und Zählbalken oben.
-class TestPattern {
-public:
-    TestPattern(UINT width, UINT height) : m_width(width), m_height(height) {
-        static const uint8_t bars[8][3] = {
-            {235, 128, 128}, {219, 16, 138}, {188, 154, 16}, {173, 42, 26},
-            {78, 214, 230},  {63, 102, 240}, {32, 240, 118}, {16, 128, 128},
-        };
-        m_base.resize(static_cast<size_t>(width) * height * 3 / 2);
-        uint8_t* y = m_base.data();
-        uint8_t* uv = y + static_cast<size_t>(width) * height;
-        for (UINT row = 0; row < height; ++row) {
-            for (UINT col = 0; col < width; ++col) y[row * width + col] = bars[col * 8 / width][0];
-        }
-        for (UINT row = 0; row < height / 2; ++row) {
-            for (UINT col = 0; col < width / 2; ++col) {
-                const uint8_t* bar = bars[(col * 2) * 8 / width];
-                uv[row * width + col * 2] = bar[1];
-                uv[row * width + col * 2 + 1] = bar[2];
-            }
-        }
-    }
-
-    const std::vector<uint8_t>& Frame(int64_t index) {
-        m_frame = m_base;
-        uint8_t* y = m_frame.data();
-        uint8_t* uv = y + static_cast<size_t>(m_width) * m_height;
-        const UINT box = m_height / 5;
-        const UINT x0 = static_cast<UINT>((index * (m_width / 120)) % (m_width - box)) & ~1u;
-        const UINT y0 = (m_height - box - m_height / 10) & ~1u;
-        for (UINT row = y0; row < y0 + box; ++row) memset(y + row * m_width + x0, 235, box);
-        for (UINT row = y0 / 2; row < (y0 + box) / 2; ++row) memset(uv + row * m_width + x0, 128, box);
-        // Oben: Bildzähler als 16 helle/dunkle Felder (zum Erkennen hängender Bilder).
-        const UINT cell = m_width / 16;
-        const UINT cellHeight = m_height / 20;
-        for (UINT bit = 0; bit < 16; ++bit) {
-            const uint8_t value = ((index >> (15 - bit)) & 1) ? 235 : 16;
-            for (UINT row = 0; row < cellHeight; ++row) memset(y + row * m_width + bit * cell, value, cell - 4);
-            for (UINT row = 0; row < cellHeight / 2; ++row) memset(uv + row * m_width + bit * cell, 128, cell - 4);
-        }
-        return m_frame;
-    }
-
-private:
-    UINT m_width;
-    UINT m_height;
-    std::vector<uint8_t> m_base;
-    std::vector<uint8_t> m_frame;
-};
-
 bool SendMessageTo(SOCKET s, uint8_t type, const std::vector<uint8_t>& payload) {
-    std::vector<uint8_t> message = KabelCam::BuildMessage(type, payload.data(), payload.size());
+    std::vector<uint8_t> message = KrakznCam::BuildMessage(type, payload.data(), payload.size());
     return SendAll(s, message.data(), message.size());
 }
 
@@ -257,11 +209,11 @@ void ServeClient(SOCKET client, const Options& options) {
     const long long expires = static_cast<long long>(time(nullptr)) + 5 * 86400;
     char hello[512];
     snprintf(hello, sizeof(hello),
-             "{\"version\":1,\"app\":\"KabelCam-Testquelle\",\"codec\":\"h264\",\"width\":%u,\"height\":%u,"
+             "{\"version\":1,\"app\":\"KrakznCam-Testquelle\",\"codec\":\"h264\",\"width\":%u,\"height\":%u,"
              "\"fps\":%u,\"bitrate\":%u,\"lens\":\"test\",\"signatureExpires\":%lld}",
              options.width, options.height, options.fps, options.bitrate, expires);
     std::vector<uint8_t> helloPayload(hello, hello + strlen(hello));
-    if (!SendMessageTo(client, KabelCam::kMsgHello, helloPayload)) return;
+    if (!SendMessageTo(client, KrakznCam::kMsgHello, helloPayload)) return;
 
     // Befehle vom PC (z. B. "keyframe") in einem eigenen Thread lesen.
     std::atomic<bool> forceKeyframe{true};
@@ -269,9 +221,9 @@ void ServeClient(SOCKET client, const Options& options) {
     std::thread reader([&] {
         uint8_t type = 0;
         std::vector<uint8_t> payload;
-        while (KabelCam::ReadMessage(client, type, payload)) {
+        while (KrakznCam::ReadMessage(client, type, payload)) {
             std::string text(payload.begin(), payload.end());
-            if (type == KabelCam::kMsgCommand && text.find("keyframe") != std::string::npos) {
+            if (type == KrakznCam::kMsgCommand && text.find("keyframe") != std::string::npos) {
                 printf("Befehl erhalten: %s\n", text.c_str());
                 forceKeyframe = true;
             }
@@ -280,8 +232,10 @@ void ServeClient(SOCKET client, const Options& options) {
     });
 
     Encoder encoder;
-    TestPattern pattern(options.width, options.height);
-    if (encoder.Init(options)) {
+    TestScene scene;
+    if (!scene.Init(options.width, options.height, options.fps)) {
+        printf("Testbild konnte nicht vorbereitet werden.\n");
+    } else if (encoder.Init(options)) {
         using Clock = std::chrono::steady_clock;
         const auto start = Clock::now();
         const auto frameDuration = std::chrono::microseconds(1'000'000 / options.fps);
@@ -291,15 +245,15 @@ void ServeClient(SOCKET client, const Options& options) {
         std::vector<EncodedFrame> encoded;
         for (int64_t index = 0; connected; ++index) {
             encoded.clear();
-            if (!encoder.Encode(pattern.Frame(index), index, forceKeyframe.exchange(false), encoded)) break;
+            if (!encoder.Encode(scene.Frame(index), index, forceKeyframe.exchange(false), encoded)) break;
             bool sendFailed = false;
             for (const EncodedFrame& frame : encoded) {
                 std::vector<uint8_t> payload;
                 payload.reserve(9 + frame.data.size());
-                KabelCam::AppendBE64(payload, static_cast<uint64_t>(index * 1'000'000 / options.fps));
+                KrakznCam::AppendBE64(payload, static_cast<uint64_t>(index * 1'000'000 / options.fps));
                 payload.push_back(frame.keyframe ? 1 : 0);
                 payload.insert(payload.end(), frame.data.begin(), frame.data.end());
-                if (!SendMessageTo(client, KabelCam::kMsgVideoFrame, payload)) {
+                if (!SendMessageTo(client, KrakznCam::kMsgVideoFrame, payload)) {
                     sendFailed = true;
                     break;
                 }

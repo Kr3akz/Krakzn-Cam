@@ -7,8 +7,8 @@ final class CameraCapture: NSObject, AVCaptureVideoDataOutputSampleBufferDelegat
     /// Aufruf auf der Video-Queue (seriell).
     var onFrame: ((CMSampleBuffer) -> Void)?
 
-    private let sessionQueue = DispatchQueue(label: "KabelCam.session")
-    private let videoQueue = DispatchQueue(label: "KabelCam.video", qos: .userInteractive)
+    private let sessionQueue = DispatchQueue(label: "KrakznCam.session")
+    private let videoQueue = DispatchQueue(label: "KrakznCam.video", qos: .userInteractive)
     private let output = AVCaptureVideoDataOutput()
     private var input: AVCaptureDeviceInput?
     private var orientation: AVCaptureVideoOrientation = .landscapeRight
