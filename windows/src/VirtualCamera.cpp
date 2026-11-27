@@ -158,6 +158,40 @@ void RegisterPersistentCamera() {
     }
 }
 
+// Hält der Windows-Kameradienst noch die alte DLL (sie wurde beim Ersetzen nur umbenannt), lädt er
+// sie bis zu seinem Neustart weiter. Dann den Dienst anhalten: Windows startet ihn beim nächsten
+// Kamerazugriff von selbst neu, mit der neuen DLL. Danach die alten Dateien löschen.
+void ReleaseOldDlls() {
+    const std::wstring directory = InstallDirectory();
+    WIN32_FIND_DATAW data{};
+    HANDLE find = FindFirstFileW((directory + L"\\krakzncam_vcam.dll.alt*").c_str(), &data);
+    if (find == INVALID_HANDLE_VALUE) return;
+    FindClose(find);
+    SC_HANDLE manager = OpenSCManagerW(nullptr, nullptr, SC_MANAGER_CONNECT);
+    if (manager) {
+        // Erst der Monitor (hängt vom Kameradienst ab), dann der Kameradienst selbst.
+        for (const wchar_t* name : {L"FrameServerMonitor", L"FrameServer"}) {
+            SC_HANDLE service = OpenServiceW(manager, name, SERVICE_STOP | SERVICE_QUERY_STATUS);
+            if (!service) continue;
+            SERVICE_STATUS status{};
+            if (ControlService(service, SERVICE_CONTROL_STOP, &status)) {
+                for (int i = 0; i < 100 && QueryServiceStatus(service, &status) && status.dwCurrentState != SERVICE_STOPPED; ++i) {
+                    Sleep(100);
+                }
+                LogLine("Einrichtung: %ls angehalten, damit die neue Kamera-DLL geladen wird", name);
+            }
+            CloseServiceHandle(service);
+        }
+        CloseServiceHandle(manager);
+    }
+    find = FindFirstFileW((directory + L"\\krakzncam_vcam.dll.alt*").c_str(), &data);
+    if (find == INVALID_HANDLE_VALUE) return;
+    do {
+        DeleteFileW((directory + L"\\" + data.cFileName).c_str());
+    } while (FindNextFileW(find, &data));
+    FindClose(find);
+}
+
 void RemovePersistentCamera() {
     if (!PersistentFlag()) return;
     const CreateVirtualCameraFn create = LoadCreateFunction();
@@ -397,6 +431,7 @@ int VirtualCamera::InstallElevated() {
     LogLine("Einrichtung: Kamera-DLL nach %ls kopiert, Anmeldung 0x%08X", target.c_str(), static_cast<unsigned>(hr));
     if (FAILED(hr)) return static_cast<int>(hr);
     RegisterPersistentCamera();
+    ReleaseOldDlls();
     return 0;
 }
 
@@ -406,8 +441,13 @@ int VirtualCamera::UninstallElevated() {
     HRESULT hr = S_OK;
     if (GetFileAttributesW(target.c_str()) != INVALID_FILE_ATTRIBUTES) hr = CallDllFunction(target, "DllUnregisterServer");
     if (!DeleteFileW(target.c_str()) && GetLastError() != ERROR_FILE_NOT_FOUND) {
-        MoveFileExW(target.c_str(), nullptr, MOVEFILE_DELAY_UNTIL_REBOOT);  // gerade in Benutzung
+        // Gerade in Benutzung: umbenennen, Kameradienst anhalten, dann löschen.
+        const std::wstring old = target + L".alt" + std::to_wstring(GetTickCount64());
+        if (MoveFileExW(target.c_str(), old.c_str(), MOVEFILE_REPLACE_EXISTING)) {
+            MoveFileExW(old.c_str(), nullptr, MOVEFILE_DELAY_UNTIL_REBOOT);  // falls es trotzdem hakt
+        }
     }
+    ReleaseOldDlls();
     RemoveDirectoryW(InstallDirectory().c_str());
     LogLine("Kamera entfernt (0x%08X)", static_cast<unsigned>(hr));
     return SUCCEEDED(hr) ? 0 : static_cast<int>(hr);

@@ -182,6 +182,12 @@ public:
     }
 
     // Liegt ein Bild bereit, das noch nicht ausgeliefert wurde?
+    // Kam in der letzten Zeit überhaupt ein Bild?
+    bool HasRecentFrame() const {
+        return m_header && m_header->frameNumber > 0 &&
+               GetTickCount64() - static_cast<ULONGLONG>(m_header->frameTick) < VCam::kFrameTimeoutMs;
+    }
+
     bool HasNewFrame() const {
         if (!m_header) return false;
         const LONG64 sequence = InterlockedOr64(&m_header->sequence, 0);
@@ -507,7 +513,9 @@ private:
                 // Neues Bild: sofort, aber nicht schneller als die Bildrate (mit Spielraum fürs Zittern).
                 // Nichts Neues: ohne KrakznCam im eigenen Takt (Platzhalter), sonst nach zwei Bildern Pause wiederholen.
                 const Clock::duration earliest = period * 3 / 4;
-                const Clock::duration repeat = frameEvent ? period * 2 : period;
+                // Kommen gerade Bilder (KrakznCam oder eigener Empfang), erst nach zwei Bildern Pause
+                // wiederholen; kommt nichts (Platzhalter), im vollen Takt liefern.
+                const Clock::duration repeat = frameEvent && m_frames.HasRecentFrame() ? period * 2 : period;
                 const Clock::duration needed = fresh ? earliest : repeat;
                 if (lastDelivery == Clock::time_point{} || since >= needed) {
                     Deliver();
