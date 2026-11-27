@@ -67,6 +67,9 @@ constexpr char32_t Monitor = 0xE7F4;
 constexpr char32_t Usb = 0xE88E;
 constexpr char32_t Camera = 0xE722;
 constexpr char32_t Folder = 0xE8B7;
+constexpr char32_t ChevronDown = 0xE70D;
+constexpr char32_t ChevronRight = 0xE76C;
+constexpr char32_t Reset = 0xE7A7;  // Rückgängig
 }  // namespace Icon
 
 // --- Text ---------------------------------------------------------------------------------
@@ -111,6 +114,25 @@ bool Tab(const char* id, std::string_view label, ImVec2 pos, bool active, bool b
 // Schalter wie in Eidolon: Spur grau bzw. blau, weißer Knopf. Gibt true zurück, wenn umgeschaltet.
 float SwitchWidth();
 bool Switch(const char* id, ImVec2 rightCenter, bool& value);
+
+// Runder Knopf nur mit Symbol (z. B. Zurücksetzen). Beim Darüberfahren weiß.
+bool IconButton(const char* id, char32_t icon, ImVec2 center, float diameter, const char* tooltip = nullptr);
+
+// Schieberegler: dünne Spur, blaue Füllung, weißer Knopf. value liegt zwischen 0 und 1.
+// origin: Startpunkt der Füllung (0 = links, 0,5 = Mitte für Werte um null).
+// Mit Verlauf (gradientLeft/Right ≠ 0) zeigt die Spur den Verlauf statt der Füllung.
+struct SliderStyle {
+    float origin = 0.0f;
+    ImU32 gradientLeft = 0;
+    ImU32 gradientRight = 0;
+};
+float SliderHeight();
+// Gibt true zurück, solange der Wert sich ändert; released = Maus wurde losgelassen.
+bool Slider(const char* id, ImVec2 pos, float width, float& value, bool& released, const SliderStyle& style = {});
+
+// Segment-Auswahl: eine Pille mit Abschnitten, der gewählte ist weiß. Gibt true bei Wechsel zurück.
+float SegmentedHeight();
+bool Segmented(const char* id, ImVec2 pos, float width, const std::string_view* labels, int count, int& selected);
 
 enum class Tone { Neutral, Ok, Warn, Bad, Solid };
 float ChipWidth(std::string_view label, bool dot);

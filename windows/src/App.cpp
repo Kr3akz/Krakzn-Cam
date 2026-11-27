@@ -8,6 +8,7 @@
 #include <cstdint>
 #include <cstdio>
 #include <ctime>
+#include <functional>
 #include <string>
 #include <vector>
 
@@ -163,6 +164,100 @@ ItemLook LookFor(const SetupItem& item) {
     return {icon, kText2};
 }
 
+// --- Einstellungen ------------------------------------------------------------------------
+
+std::string JsonNumber(double value) {
+    char buffer[32];
+    snprintf(buffer, sizeof(buffer), "%.6g", value);
+    return buffer;
+}
+
+// „+0,3“, „−0,7“, „0“ (mit echtem Minuszeichen).
+std::string SignedDecimal(double value, int digits) {
+    const double factor = std::pow(10.0, digits);
+    const double rounded = std::round(value * factor) / factor;
+    if (rounded == 0.0) return "0";
+    return (rounded > 0 ? "+" : "\xE2\x88\x92") + Decimal(std::fabs(rounded), digits);
+}
+
+std::string ShutterText(double seconds) {
+    if (seconds <= 0.0) return "–";
+    if (seconds < 0.95) return "1/" + std::to_string(std::lround(1.0 / seconds)) + " s";
+    return Decimal(seconds, 1) + " s";
+}
+
+const char* ShortLensLabel(std::string_view lens) {
+    if (lens == "wide") return "Weit";
+    if (lens == "ultraWide") return "Ultraweit";
+    if (lens == "telephoto") return "Tele";
+    if (lens == "front") return "Front";
+    return "Objektiv";
+}
+
+std::vector<std::string> SplitList(const std::string& text) {
+    std::vector<std::string> parts;
+    size_t start = 0;
+    while (start <= text.size()) {
+        const size_t comma = std::min(text.find(',', start), text.size());
+        if (comma > start) parts.push_back(text.substr(start, comma - start));
+        start = comma + 1;
+    }
+    return parts;
+}
+
+// Logarithmische Skala (Verschlusszeit, ISO, Zoom): gleiche Wege für gleiche Verhältnisse.
+float ToLog(double value, double min, double max) {
+    if (min <= 0.0 || max <= min) return 0.0f;
+    return static_cast<float>(std::log(std::clamp(value, min, max) / min) / std::log(max / min));
+}
+double FromLog(float t, double min, double max) {
+    return min * std::pow(max / min, static_cast<double>(t));
+}
+
+const float kRowGap = 14.0f;
+
+// Beschriftung links, Wert rechts, darunter der Regler.
+struct SliderResult {
+    bool changed = false;
+    bool released = false;
+    float height = 0.0f;
+};
+SliderResult SliderRow(ImDrawList* dl, const char* id, ImVec2 pos, float width, std::string_view label,
+                       const std::string& value, float& t, const SliderStyle& style = {}) {
+    const Fonts& fonts = GetFonts();
+    Text(dl, fonts.regular, Px(14.0f), pos, kText2, label);
+    const ImVec2 valueSize = Measure(fonts.semibold, Px(13.5f), value);
+    Text(dl, fonts.semibold, Px(13.5f), ImVec2(pos.x + width - valueSize.x, pos.y + Px(1.0f)), kText, value);
+    SliderResult result;
+    result.changed = Slider(id, ImVec2(pos.x, pos.y + Px(23.0f)), width, t, result.released, style);
+    result.height = Px(23.0f) + SliderHeight();
+    return result;
+}
+
+bool SwitchRow(ImDrawList* dl, const char* id, ImVec2 pos, float width, std::string_view label, bool& value,
+               float& height) {
+    height = Px(34.0f);
+    const ImVec2 text = Measure(GetFonts().regular, Px(14.5f), label);
+    Text(dl, GetFonts().regular, Px(14.5f), ImVec2(pos.x, pos.y + (height - text.y) * 0.5f), kText, label);
+    return Switch(id, ImVec2(pos.x + width, pos.y + height * 0.5f), value);
+}
+
+bool SegmentRow(ImDrawList* dl, const char* id, ImVec2 pos, float width, std::string_view label,
+                const std::string_view* labels, int count, int& selected, float& height) {
+    float top = 0.0f;
+    if (!label.empty()) {
+        Text(dl, GetFonts().regular, Px(14.0f), pos, kText2, label);
+        top = Px(25.0f);
+    }
+    height = top + SegmentedHeight();
+    return Segmented(id, ImVec2(pos.x, pos.y + top), width, labels, count, selected);
+}
+
+// Kurzer grauer Text, z. B. wenn ein Objektiv etwas nicht kann.
+float NoteRow(ImDrawList* dl, ImVec2 pos, float width, std::string_view text) {
+    return Text(dl, GetFonts().regular, Px(13.5f), pos, kText3, text, width);
+}
+
 }  // namespace
 
 App::App(ID3D11Device* device, StreamClient& client, FrameStore& store, Page initialPage, float dpiScale,
@@ -218,6 +313,15 @@ void App::Draw() {
     m_renew.Update(status.direct ? 0 : status.signatureExpires, m_setup);
     const bool live = status.state == StreamStatus::State::Streaming && m_video.HasFrame();
 
+    m_cam = m_client.CameraState();
+    if (m_cam.empty()) {
+        m_local.clear();
+        m_pending.clear();
+    } else {
+        const auto now = Clock::now();
+        std::erase_if(m_local, [&](const auto& entry) { return entry.second.until <= now; });
+    }
+
     DrawBackground(ImGui::GetBackgroundDrawList(), size, live);
 
     ImGui::SetNextWindowPos(viewport->Pos);
@@ -245,7 +349,9 @@ void App::Draw() {
     PopAlpha();
 
     ImGui::End();
-    m_animating = Theme::Animating() || revealing;
+    FlushCamCommands(false);
+    // Noch nicht gesendete Änderungen brauchen ein weiteres Bild, auch ohne Mausbewegung.
+    m_animating = Theme::Animating() || revealing || !m_pending.empty();
 }
 
 void App::DrawBackground(ImDrawList* dl, ImVec2 size, bool live) {
@@ -307,6 +413,12 @@ void App::DrawHeader(const StreamStatus& status, ImVec2 size) {
 void App::DrawCameraPage(const StreamStatus& status, ImVec2 min, ImVec2 max) {
     ImDrawList* dl = ImGui::GetWindowDrawList();
     const bool live = status.state == StreamStatus::State::Streaming && m_video.HasFrame();
+    const bool connected =
+        status.state == StreamStatus::State::Streaming || status.state == StreamStatus::State::Connected;
+    if (connected && !m_cam.empty()) {
+        DrawStudio(status, min, max, live);
+        return;
+    }
     const float pad = PagePadding(max.x - min.x);
     const float gap = Px(40.0f);
     const float bottom = max.y - pad * 0.8f;
@@ -327,8 +439,6 @@ void App::DrawCameraPage(const StreamStatus& status, ImVec2 min, ImVec2 max) {
     const float columnX = cardMax.x + gap;
     const float columnWidth = column;
     const float heroBottom = DrawHero(dl, ImVec2(columnX, top + Px(4.0f)), columnWidth, status, live);
-    const bool connected =
-        status.state == StreamStatus::State::Streaming || status.state == StreamStatus::State::Connected;
     const ImVec2 cardTop(columnX, heroBottom + Px(22.0f));
     if (connected) DrawStats(dl, cardTop, columnWidth, cardMax.y, status);
     else DrawSteps(dl, cardTop, columnWidth, cardMax.y);
@@ -390,8 +500,19 @@ float App::DrawHero(ImDrawList* dl, ImVec2 pos, float width, const StreamStatus&
     if (state.hint[0] != '\0') {
         y += Text(dl, fonts.light, Px(16.0f), ImVec2(pos.x, y), kText2, state.hint, width) + Px(18.0f);
     }
+    y += DrawNotes(dl, ImVec2(pos.x, y), width, status, live);
+    return y;
+}
 
-    // Hinweise: Signatur läuft ab, oder auf dem PC fehlt noch etwas.
+float App::DrawNotes(ImDrawList* dl, ImVec2 pos, float width, const StreamStatus& status, bool live) {
+    float y = pos.y;
+    bool any = false;
+    auto next = [&] {
+        if (any) y += Px(12.0f);
+        any = true;
+    };
+
+    // Signatur läuft ab, oder auf dem PC fehlt noch etwas.
     bool showSideloadly = false;
     bool showSetup = false;
     if (status.signatureExpires > 0) {
@@ -399,43 +520,49 @@ float App::DrawHero(ImDrawList* dl, ImVec2 pos, float width, const StreamStatus&
         const bool expired = status.signatureExpires < static_cast<int64_t>(time(nullptr));
         const AutoRenew::State renew = m_renew.GetState();
         if (renew == AutoRenew::State::Renewing) {
+            next();
             y += InfoNote(dl, ImVec2(pos.x, y), width,
                           "Die Signatur läuft bald ab. Sideloadly erneuert sie gerade automatisch, die App auf dem "
-                          "iPhone startet dabei kurz neu.") +
-                 Px(16.0f);
+                          "iPhone startet dabei kurz neu.");
         } else if ((expired || days <= 1) && renew == AutoRenew::State::Waiting) {
+            next();
             y += InfoNote(dl, ImVec2(pos.x, y), width,
                           "Die Signatur läuft am " + ShortDate(status.signatureExpires) +
-                              " ab. KrakznCam lässt sie rechtzeitig von Sideloadly erneuern.") +
-                 Px(16.0f);
+                              " ab. KrakznCam lässt sie rechtzeitig von Sideloadly erneuern.");
         } else if (expired || days <= 2) {
             std::string note;
             if (expired) note = "Die Signatur ist abgelaufen. Spiele die App mit Sideloadly neu auf.";
             else if (days == 0) note = "Die Signatur läuft heute ab. Erneuere sie jetzt mit Sideloadly.";
             else if (days == 1) note = "Die Signatur läuft morgen ab. Erneuere sie mit Sideloadly.";
             else note = "Die Signatur läuft am " + ShortDate(status.signatureExpires) + " ab. Erneuere sie bald mit Sideloadly.";
-            y += WarnNote(dl, ImVec2(pos.x, y), width, note) + Px(16.0f);
+            next();
+            y += WarnNote(dl, ImVec2(pos.x, y), width, note);
             showSideloadly = !m_setup.sideloadlyExe.empty();
         }
     }
     if (!live && OpenSetupItems() > 0) {
-        y += WarnNote(dl, ImVec2(pos.x, y), width, "Auf diesem PC fehlt noch etwas für Sideloadly.") + Px(16.0f);
+        next();
+        y += WarnNote(dl, ImVec2(pos.x, y), width, "Auf diesem PC fehlt noch etwas für Sideloadly.");
         showSetup = true;
     }
 
-    float x = pos.x;
-    if (showSideloadly) {
-        const float buttonWidth = ButtonWidth("Sideloadly öffnen", Icon::OpenExternal, ButtonSize::Normal);
-        if (Button("##hero_sideloadly", "Sideloadly öffnen", Icon::OpenExternal, ImVec2(x, y))) {
-            OpenTarget(m_setup.sideloadlyExe);
+    if (showSideloadly || showSetup) {
+        next();
+        y += Px(4.0f);
+        float x = pos.x;
+        if (showSideloadly) {
+            const float buttonWidth = ButtonWidth("Sideloadly öffnen", Icon::OpenExternal, ButtonSize::Normal);
+            if (Button("##hero_sideloadly", "Sideloadly öffnen", Icon::OpenExternal, ImVec2(x, y))) {
+                OpenTarget(m_setup.sideloadlyExe);
+            }
+            x += buttonWidth + Px(12.0f);
         }
-        x += buttonWidth + Px(12.0f);
+        if (showSetup) {
+            if (Button("##hero_setup", "Zur Einrichtung", Icon::Settings, ImVec2(x, y))) ShowPage(Page::Setup);
+        }
+        y += ButtonHeight(ButtonSize::Normal);
     }
-    if (showSetup) {
-        if (Button("##hero_setup", "Zur Einrichtung", Icon::Settings, ImVec2(x, y))) ShowPage(Page::Setup);
-    }
-    if (showSideloadly || showSetup) y += ButtonHeight(ButtonSize::Normal);
-    return y;
+    return y - pos.y;
 }
 
 void App::DrawStats(ImDrawList* dl, ImVec2 min, float width, float bottom, const StreamStatus& status) {
@@ -525,6 +652,533 @@ void App::DrawSteps(ImDrawList* dl, ImVec2 min, float width, float bottom) {
         Text(dl, fonts.regular, textSize, ImVec2(cardMin.x + textX, textTop), kText2, steps[i], textWidth);
         y += rowHeights[i] + Px(12.0f);
     }
+}
+
+// --- Kamera-Einstellungen -----------------------------------------------------------------
+
+const JsonValue* App::CamValue(const std::string& key) const {
+    const auto local = m_local.find(key);
+    if (local != m_local.end() && Clock::now() < local->second.until) return &local->second.value;
+    const auto it = m_cam.find(key);
+    return it != m_cam.end() ? &it->second : nullptr;
+}
+
+double App::CamNumber(const std::string& key, double fallback) const {
+    const JsonValue* value = CamValue(key);
+    return value && value->type == JsonValue::Type::Number ? value->number : fallback;
+}
+
+bool App::CamFlag(const std::string& key) const {
+    const JsonValue* value = CamValue(key);
+    return value && value->type == JsonValue::Type::Bool && value->boolean;
+}
+
+std::string App::CamString(const std::string& key) const {
+    const JsonValue* value = CamValue(key);
+    return value && value->type == JsonValue::Type::String ? value->text : std::string();
+}
+
+namespace {
+// So lange zeigt die Oberfläche den eigenen Wert, bis der Zustand vom iPhone ihn bestätigt hat.
+constexpr auto kLocalHold = std::chrono::milliseconds(1500);
+}  // namespace
+
+void App::SetCamNumber(const std::string& key, double value) {
+    LocalValue& local = m_local[key];
+    local.value.type = JsonValue::Type::Number;
+    local.value.number = value;
+    local.until = Clock::now() + kLocalHold;
+    m_pending[key] = JsonNumber(value);
+}
+
+void App::SetCamFlag(const std::string& key, bool value) {
+    LocalValue& local = m_local[key];
+    local.value.type = JsonValue::Type::Bool;
+    local.value.boolean = value;
+    local.until = Clock::now() + kLocalHold;
+    m_pending[key] = value ? "true" : "false";
+}
+
+void App::SetCamString(const std::string& key, const std::string& value) {
+    LocalValue& local = m_local[key];
+    local.value.type = JsonValue::Type::String;
+    local.value.text = value;
+    local.until = Clock::now() + kLocalHold;
+    m_pending[key] = "\"" + value + "\"";
+}
+
+void App::FlushCamCommands(bool force) {
+    if (m_pending.empty()) return;
+    const auto now = Clock::now();
+    if (!force && now - m_lastSend < std::chrono::milliseconds(80)) return;
+    std::string json = "{\"cmd\":\"set\"";
+    for (const auto& [key, value] : m_pending) json += ",\"" + key + "\":" + value;
+    json += "}";
+    m_client.SendCommand(json);
+    m_pending.clear();
+    m_lastSend = now;
+}
+
+void App::DrawStudio(const StreamStatus& status, ImVec2 min, ImVec2 max, bool live) {
+    ImDrawList* dl = ImGui::GetWindowDrawList();
+    const float pad = PagePadding(max.x - min.x);
+    const float gap = Px(32.0f);
+    const float top0 = min.y + Px(6.0f);
+    const float bottom = max.y - pad * 0.8f;
+    const float column = std::clamp((max.x - min.x) * 0.28f, Px(330.0f), Px(400.0f));
+    const float stripGap = Px(22.0f);
+    const float strip = m_stripHeight > 0.0f ? m_stripHeight : Px(110.0f);
+
+    // Vorschau so groß wie möglich, darunter die Infozeile, rechts die Einstellungen.
+    const float availableWidth = (max.x - pad) - (min.x + pad) - column - gap;
+    const float availableHeight = bottom - top0 - stripGap - strip;
+    const float cardWidth = std::max(Px(240.0f), std::min(availableWidth, availableHeight * 16.0f / 9.0f));
+    const float cardHeight = cardWidth * 9.0f / 16.0f;
+    const float total = cardHeight + stripGap + strip;
+    const float top = top0 + std::max(0.0f, (bottom - top0) - total) * 0.42f;
+    const float compositionWidth = cardWidth + gap + column;
+    const float left = min.x + std::max(pad, ((max.x - min.x) - compositionWidth) * 0.5f);
+
+    DrawPreview(dl, ImVec2(left, top), ImVec2(left + cardWidth, top + cardHeight), status, live);
+    m_stripHeight = DrawInfoStrip(dl, ImVec2(left, top + cardHeight + stripGap), cardWidth, status, live);
+    const float panelX = left + cardWidth + gap;
+    const float panelBottom = std::min(bottom, std::max(top + cardHeight + stripGap + m_stripHeight, top + Px(380.0f)));
+    DrawSettings(ImVec2(panelX, top), ImVec2(panelX + column, panelBottom));
+}
+
+float App::DrawInfoStrip(ImDrawList* dl, ImVec2 pos, float width, const StreamStatus& status, bool live) {
+    const Fonts& fonts = GetFonts();
+    const StateText state = Describe(status);
+    float y = pos.y;
+    y += Kicker(dl, ImVec2(pos.x, y), status.direct ? "TESTQUELLE" : "IPHONE") + Px(6.0f);
+    const float titleSize = Px(32.0f);
+    const ImVec2 title = Measure(fonts.light, titleSize, state.title);
+    Text(dl, fonts.light, titleSize, ImVec2(pos.x, y), kText, state.title);
+
+    // Kennzahlen rechts neben dem Titel, so viele wie Platz haben.
+    struct Stat {
+        std::string value;
+        const char* label;
+        ImU32 color;
+    };
+    std::vector<Stat> stats;
+    stats.push_back({Decimal(status.measuredFps, 0) + " FPS", "EMPFANGEN", kText});
+    stats.push_back({Decimal(status.measuredMbps, 1) + " Mbit/s", "BITRATE", kText});
+    if (status.signatureExpires > 0) {
+        const int days = CalendarDaysUntil(status.signatureExpires);
+        const bool expired = status.signatureExpires < static_cast<int64_t>(time(nullptr));
+        std::string value = expired ? "Abgelaufen" : days == 0 ? "Heute" : days == 1 ? "1 Tag" : std::to_string(days) + " Tage";
+        stats.push_back({value, "SIGNATUR", expired || days <= 2 ? kGold : kText});
+    }
+    stats.push_back({status.hardwareDecoding ? "Grafikkarte" : "Prozessor", "DEKODIERUNG", kText});
+
+    const float valueSize = Px(22.0f);
+    const float labelSize = Px(10.5f);
+    const float statGap = Px(30.0f);
+    const float room = width - title.x - Px(40.0f);
+    std::vector<float> widths;
+    float total = 0.0f;
+    for (const Stat& stat : stats) {
+        const float w = std::max(Measure(fonts.light, valueSize, stat.value).x,
+                                 SpacedWidth(fonts.brand, labelSize, stat.label, 0.14f));
+        const float needed = total + (widths.empty() ? 0.0f : statGap) + w;
+        if (needed > room) break;
+        total = needed;
+        widths.push_back(w);
+    }
+    float x = pos.x + width - total;
+    for (size_t i = 0; i < widths.size(); ++i) {
+        const float valueHeight = Text(dl, fonts.light, valueSize, ImVec2(x, pos.y + Px(4.0f)), stats[i].color, stats[i].value);
+        Spaced(dl, fonts.brand, labelSize, ImVec2(x, pos.y + Px(4.0f) + valueHeight + Px(4.0f)), kText3, stats[i].label,
+               0.14f);
+        x += widths[i] + statGap;
+    }
+    y += title.y + Px(10.0f);
+
+    // Format und Objektiv als Chips.
+    std::vector<std::string> chips;
+    if (status.width > 0) chips.push_back(std::to_string(status.width) + " × " + std::to_string(status.height));
+    if (status.fps > 0) chips.push_back(std::to_string(status.fps) + " FPS");
+    if (!status.lens.empty()) chips.push_back(LensLabel(status.lens));
+    chips.push_back("H.264");
+    float chipX = pos.x;
+    for (const std::string& chip : chips) {
+        const float chipWidth = ChipWidth(chip, false);
+        if (chipX > pos.x && chipX + chipWidth > pos.x + width) {
+            chipX = pos.x;
+            y += ChipHeight() + Px(7.0f);
+        }
+        chipX += Chip(dl, ImVec2(chipX, y), chip, Tone::Neutral) + Px(7.0f);
+    }
+    y += ChipHeight();
+
+    const float notes = DrawNotes(dl, ImVec2(pos.x, y + Px(16.0f)), std::min(width, Px(640.0f)), status, live);
+    if (notes > 0.0f) y += Px(16.0f) + notes;
+    return y - pos.y;
+}
+
+void App::DrawSettings(ImVec2 min, ImVec2 max) {
+    const Fonts& fonts = GetFonts();
+    ImDrawList* page = ImGui::GetWindowDrawList();
+    Card(page, min, max, Px(16.0f));
+
+    // Kopf der Karte (scrollt nicht mit).
+    const float inset = Px(18.0f);
+    float headerY = min.y + Px(20.0f);
+    headerY += Kicker(page, ImVec2(min.x + inset + Px(4.0f), headerY), "KAMERA", 10.5f) + Px(4.0f);
+    headerY += Text(page, fonts.light, Px(26.0f), ImVec2(min.x + inset + Px(4.0f), headerY), kText, "Einstellungen") +
+               Px(14.0f);
+
+    const ImVec2 childMin(min.x + Px(8.0f), headerY);
+    const ImVec2 childMax(max.x - Px(5.0f), max.y - Px(10.0f));
+    if (childMax.y - childMin.y < Px(40.0f)) return;
+
+    ImGui::PushStyleVar(ImGuiStyleVar_ScrollbarSize, Px(5.0f));
+    ImGui::PushStyleVar(ImGuiStyleVar_ScrollbarRounding, Px(3.0f));
+    ImGui::PushStyleColor(ImGuiCol_ScrollbarBg, IM_COL32(0, 0, 0, 0));
+    ImGui::PushStyleColor(ImGuiCol_ScrollbarGrab, White(0.12f));
+    ImGui::PushStyleColor(ImGuiCol_ScrollbarGrabHovered, White(0.22f));
+    ImGui::PushStyleColor(ImGuiCol_ScrollbarGrabActive, White(0.3f));
+    ImGui::SetCursorScreenPos(childMin);
+    ImGui::BeginChild("##settings", childMax - childMin, ImGuiChildFlags_None, ImGuiWindowFlags_NoBackground);
+    ImDrawList* dl = ImGui::GetWindowDrawList();
+    const ImVec2 origin = ImGui::GetCursorScreenPos();
+    const float left = min.x + inset - Px(6.0f);
+    const float tileWidth = (max.x - inset + Px(6.0f)) - left - Px(4.0f);
+    float cy = origin.y;
+
+    // Kacheln liegen hinter dem Inhalt; ihre Höhe steht erst nach dem Inhalt fest.
+    dl->ChannelsSplit(2);
+    dl->ChannelsSetCurrent(1);
+
+    using Content = std::function<float(float x, float y, float width)>;
+    auto section = [&](const char* id, std::string_view title, const std::function<void()>& reset, const Content& content) {
+        SectionState& state = m_sections[id];
+        const float headerHeight = Px(46.0f);
+        const float padX = Px(16.0f);
+        const float tileTop = cy;
+        ImGui::PushID(id);
+
+        const float resetSize = Px(28.0f);
+        const float headerWidth = tileWidth - (reset ? resetSize + Px(14.0f) : 0.0f);
+        ImGui::SetCursorScreenPos(ImVec2(left, cy));
+        if (ImGui::InvisibleButton("##header", ImVec2(headerWidth, headerHeight))) state.open = !state.open;
+        const bool hovered = ImGui::IsItemHovered();
+        if (hovered) ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
+        const float hover = Animate(ImGui::GetItemID(), hovered ? 1.0f : 0.0f, 18.0f);
+        const float open = Animate(ImGui::GetID("##open"), state.open ? 1.0f : 0.0f, 14.0f);
+
+        DrawIcon(dl, open > 0.5f ? Icon::ChevronDown : Icon::ChevronRight,
+                 ImVec2(left + padX + Px(5.0f), cy + headerHeight * 0.5f), Px(11.0f), Mix(kText3, kText, hover));
+        const float titleSize = Px(11.5f);
+        Spaced(dl, fonts.brand, titleSize, ImVec2(left + padX + Px(20.0f), cy + (headerHeight - titleSize * 1.2f) * 0.5f),
+               Mix(kText2, kText, hover), title, 0.18f);
+        if (reset && IconButton("##reset", Icon::Reset, ImVec2(left + tileWidth - Px(10.0f) - resetSize * 0.5f,
+                                                              cy + headerHeight * 0.5f),
+                                resetSize, "Zurücksetzen")) {
+            reset();
+            FlushCamCommands(true);
+        }
+        cy += headerHeight;
+
+        if (open > 0.001f) {
+            const float visible = state.height * open;
+            const bool partial = open < 0.999f;
+            ImGui::PushClipRect(ImVec2(left, cy), ImVec2(left + tileWidth, cy + visible), true);
+            if (partial) ImGui::BeginDisabled();
+            PushAlpha(open);
+            state.height = content(left + padX, cy, tileWidth - padX * 2.0f) + Px(16.0f);
+            PopAlpha();
+            if (partial) ImGui::EndDisabled();
+            ImGui::PopClipRect();
+            cy += state.height * open;
+        }
+
+        dl->ChannelsSetCurrent(0);
+        dl->AddRectFilled(ImVec2(left, tileTop), ImVec2(left + tileWidth, cy), A(White(0.035f + 0.02f * hover)), Px(12.0f));
+        dl->ChannelsSetCurrent(1);
+        cy += Px(10.0f);
+        ImGui::PopID();
+    };
+
+    // Regler in der Automatik: blasser, aber bedienbar. Wer zieht, schaltet auf manuell.
+    constexpr float kAutoAlpha = 0.5f;
+
+    if (CamHas("resolution")) {
+        section("format", "FORMAT", nullptr, [&](float x, float y, float w) {
+            const float y0 = y;
+            float h = 0.0f;
+            static constexpr std::string_view kResolutions[] = {"720p", "1080p", "4K"};
+            static const char* kResolutionKeys[] = {"hd720", "hd1080", "uhd4k"};
+            const std::string resolution = CamString("resolution");
+            int selected = -1;
+            for (int i = 0; i < 3; ++i) {
+                if (resolution == kResolutionKeys[i]) selected = i;
+            }
+            if (SegmentRow(dl, "##resolution", ImVec2(x, y), w, "Auflösung", kResolutions, 3, selected, h)) {
+                SetCamString("resolution", kResolutionKeys[selected]);
+                FlushCamCommands(true);
+            }
+            y += h + Px(kRowGap);
+
+            static constexpr std::string_view kFps[] = {"24", "30", "60"};
+            static const int kFpsValues[] = {24, 30, 60};
+            const int fps = static_cast<int>(std::lround(CamNumber("fps")));
+            selected = -1;
+            for (int i = 0; i < 3; ++i) {
+                if (fps == kFpsValues[i]) selected = i;
+            }
+            if (SegmentRow(dl, "##fps", ImVec2(x, y), w, "Bildrate (FPS)", kFps, 3, selected, h)) {
+                SetCamNumber("fps", kFpsValues[selected]);
+                FlushCamCommands(true);
+            }
+            y += h + Px(kRowGap);
+
+            static constexpr std::string_view kQualities[] = {"Sparsam", "Hoch", "Maximal"};
+            static const char* kQualityKeys[] = {"balanced", "high", "maximum"};
+            const std::string quality = CamString("quality");
+            selected = -1;
+            for (int i = 0; i < 3; ++i) {
+                if (quality == kQualityKeys[i]) selected = i;
+            }
+            if (SegmentRow(dl, "##quality", ImVec2(x, y), w, "Qualität", kQualities, 3, selected, h)) {
+                SetCamString("quality", kQualityKeys[selected]);
+                FlushCamCommands(true);
+            }
+            y += h;
+            return y - y0;
+        });
+    }
+
+    if (CamHas("zoom") || CamHas("lenses")) {
+        section("lens", "OBJEKTIV & ZOOM", [&] { SetCamNumber("zoom", 1.0); }, [&](float x, float y, float w) {
+            const float y0 = y;
+            const std::vector<std::string> lenses = SplitList(CamString("lenses"));
+            if (lenses.size() > 1) {
+                std::vector<std::string_view> labels;
+                int selected = -1;
+                const std::string lens = CamString("lens");
+                for (size_t i = 0; i < lenses.size(); ++i) {
+                    labels.push_back(ShortLensLabel(lenses[i]));
+                    if (lenses[i] == lens) selected = static_cast<int>(i);
+                }
+                float h = 0.0f;
+                if (SegmentRow(dl, "##lens", ImVec2(x, y), w, "", labels.data(), static_cast<int>(labels.size()), selected,
+                               h)) {
+                    SetCamString("lens", lenses[selected]);
+                    FlushCamCommands(true);
+                }
+                y += h + Px(kRowGap);
+            }
+            const double maxZoom = CamNumber("zoom.max", 1.0);
+            if (maxZoom > 1.01) {
+                const double zoom = CamNumber("zoom", 1.0);
+                float t = ToLog(zoom, 1.0, maxZoom);
+                const SliderResult r = SliderRow(dl, "##zoom", ImVec2(x, y), w, "Zoom", Decimal(zoom, 1) + "×", t);
+                if (r.changed) SetCamNumber("zoom", std::round(FromLog(t, 1.0, maxZoom) * 10.0) / 10.0);
+                if (r.released) FlushCamCommands(true);
+                y += r.height;
+            } else {
+                y += NoteRow(dl, ImVec2(x, y), w, "Dieses Objektiv kann nicht zoomen.");
+            }
+            return y - y0;
+        });
+    }
+
+    if (CamHas("exposure.auto")) {
+        section("exposure", "BELICHTUNG",
+                [&] {
+                    SetCamFlag("exposure.auto", true);
+                    SetCamNumber("ev", 0.0);
+                },
+                [&](float x, float y, float w) {
+                    const float y0 = y;
+                    bool automatic = CamFlag("exposure.auto");
+                    const bool manualPossible = CamFlag("exposure.manual");
+                    float h = 0.0f;
+                    if (manualPossible) {
+                        if (SwitchRow(dl, "##exposure_auto", ImVec2(x, y), w, "Automatisch", automatic, h)) {
+                            SetCamFlag("exposure.auto", automatic);
+                            FlushCamCommands(true);
+                        }
+                        y += h + Px(8.0f);
+                    }
+                    {
+                        // Die Korrektur wirkt nur mit Automatik; Ziehen schaltet sie wieder ein.
+                        // So bleibt die Anordnung beim Umschalten gleich.
+                        PushAlpha(automatic ? 1.0f : kAutoAlpha);
+                        const double evMin = CamNumber("ev.min", -3.0);
+                        const double evMax = std::max(CamNumber("ev.max", 3.0), evMin + 0.1);
+                        const double ev = CamNumber("ev");
+                        float t = static_cast<float>((ev - evMin) / (evMax - evMin));
+                        SliderStyle style;
+                        style.origin = static_cast<float>((0.0 - evMin) / (evMax - evMin));
+                        const SliderResult r = SliderRow(dl, "##ev", ImVec2(x, y), w, "Belichtungskorrektur",
+                                                         SignedDecimal(ev, 1) + " EV", t, style);
+                        if (r.changed) {
+                            SetCamFlag("exposure.auto", true);
+                            SetCamNumber("ev", std::round((evMin + (evMax - evMin) * t) * 10.0) / 10.0);
+                        }
+                        if (r.released) FlushCamCommands(true);
+                        y += r.height + Px(kRowGap);
+                        PopAlpha();
+                    }
+                    const double shutterMin = CamNumber("shutter.min");
+                    const double shutterMax = CamNumber("shutter.max");
+                    const double isoMin = CamNumber("iso.min");
+                    const double isoMax = CamNumber("iso.max");
+                    if (manualPossible && shutterMin > 0.0 && shutterMax > shutterMin && isoMin > 0.0 && isoMax > isoMin) {
+                        PushAlpha(automatic ? kAutoAlpha : 1.0f);
+                        const double shutter = CamNumber("shutter", shutterMax);
+                        const double iso = CamNumber("iso", isoMin);
+                        float t = ToLog(shutter, shutterMin, shutterMax);
+                        SliderResult r = SliderRow(dl, "##shutter", ImVec2(x, y), w, "Verschlusszeit", ShutterText(shutter), t);
+                        if (r.changed) {
+                            double value = FromLog(t, shutterMin, shutterMax);
+                            if (value < 0.95) value = 1.0 / std::round(1.0 / value);  // glatte Werte wie 1/60
+                            SetCamFlag("exposure.auto", false);
+                            SetCamNumber("shutter", std::clamp(value, shutterMin, shutterMax));
+                            SetCamNumber("iso", std::round(iso));
+                        }
+                        if (r.released) FlushCamCommands(true);
+                        y += r.height + Px(kRowGap);
+
+                        t = ToLog(iso, isoMin, isoMax);
+                        r = SliderRow(dl, "##iso", ImVec2(x, y), w, "ISO", std::to_string(std::lround(iso)), t);
+                        if (r.changed) {
+                            SetCamFlag("exposure.auto", false);
+                            SetCamNumber("iso", std::round(std::clamp(FromLog(t, isoMin, isoMax), isoMin, isoMax)));
+                            SetCamNumber("shutter", shutter);
+                        }
+                        if (r.released) FlushCamCommands(true);
+                        y += r.height;
+                        PopAlpha();
+                    } else {
+                        y -= Px(kRowGap);
+                    }
+                    return y - y0;
+                });
+    }
+
+    if (CamHas("wb.auto")) {
+        section("whitebalance", "WEISSABGLEICH", [&] { SetCamFlag("wb.auto", true); }, [&](float x, float y, float w) {
+            const float y0 = y;
+            bool automatic = CamFlag("wb.auto");
+            if (!CamFlag("wb.manual")) {
+                y += NoteRow(dl, ImVec2(x, y), w, "Diese Kamera stellt den Weißabgleich nur automatisch ein.");
+                return y - y0;
+            }
+            float h = 0.0f;
+            if (SwitchRow(dl, "##wb_auto", ImVec2(x, y), w, "Automatisch", automatic, h)) {
+                SetCamFlag("wb.auto", automatic);
+                FlushCamCommands(true);
+            }
+            y += h + Px(8.0f);
+            PushAlpha(automatic ? kAutoAlpha : 1.0f);
+            constexpr double kTempMin = 2500.0;
+            constexpr double kTempMax = 8000.0;
+            const double temperature = CamNumber("wb.temp", 5000.0);
+            const double tint = CamNumber("wb.tint");
+            float t = static_cast<float>((std::clamp(temperature, kTempMin, kTempMax) - kTempMin) / (kTempMax - kTempMin));
+            SliderStyle warmth;
+            warmth.gradientLeft = IM_COL32(104, 156, 255, 230);
+            warmth.gradientRight = IM_COL32(255, 186, 96, 230);
+            SliderResult r = SliderRow(dl, "##wb_temp", ImVec2(x, y), w, "Farbtemperatur",
+                                       std::to_string(std::lround(temperature)) + " K", t, warmth);
+            if (r.changed) {
+                SetCamFlag("wb.auto", false);
+                SetCamNumber("wb.temp", std::round((kTempMin + (kTempMax - kTempMin) * t) / 50.0) * 50.0);
+                SetCamNumber("wb.tint", std::round(tint));
+            }
+            if (r.released) FlushCamCommands(true);
+            y += r.height + Px(kRowGap);
+
+            constexpr double kTintRange = 100.0;
+            t = static_cast<float>((std::clamp(tint, -kTintRange, kTintRange) + kTintRange) / (2.0 * kTintRange));
+            SliderStyle centered;
+            centered.origin = 0.5f;
+            r = SliderRow(dl, "##wb_tint", ImVec2(x, y), w, "Tönung", SignedDecimal(tint, 0), t, centered);
+            if (r.changed) {
+                SetCamFlag("wb.auto", false);
+                SetCamNumber("wb.tint", std::round(-kTintRange + 2.0 * kTintRange * t));
+                SetCamNumber("wb.temp", std::round(temperature));
+            }
+            if (r.released) FlushCamCommands(true);
+            y += r.height;
+            PopAlpha();
+            return y - y0;
+        });
+    }
+
+    if (CamHas("focus.auto")) {
+        section("focus", "FOKUS", [&] { SetCamFlag("focus.auto", true); }, [&](float x, float y, float w) {
+            const float y0 = y;
+            bool automatic = CamFlag("focus.auto");
+            if (!CamFlag("focus.manual")) {
+                y += NoteRow(dl, ImVec2(x, y), w, "Dieses Objektiv stellt die Schärfe nur automatisch ein.");
+                return y - y0;
+            }
+            float h = 0.0f;
+            if (SwitchRow(dl, "##focus_auto", ImVec2(x, y), w, "Automatisch", automatic, h)) {
+                SetCamFlag("focus.auto", automatic);
+                FlushCamCommands(true);
+            }
+            y += h + Px(8.0f);
+            PushAlpha(automatic ? kAutoAlpha : 1.0f);
+            const double position = std::clamp(CamNumber("focus.pos", 0.5), 0.0, 1.0);
+            float t = static_cast<float>(position);
+            const std::string value = position < 0.02 ? "Nah" : position > 0.98 ? "Fern" : Decimal(position * 100.0, 0) + " %";
+            const SliderResult r = SliderRow(dl, "##focus_pos", ImVec2(x, y), w, "Entfernung", value, t);
+            if (r.changed) {
+                SetCamFlag("focus.auto", false);
+                SetCamNumber("focus.pos", std::round(t * 1000.0) / 1000.0);
+            }
+            if (r.released) FlushCamCommands(true);
+            y += r.height;
+            PopAlpha();
+            return y - y0;
+        });
+    }
+
+    if (CamHas("mirror")) {
+        section("picture", "BILD", nullptr, [&](float x, float y, float w) {
+            const float y0 = y;
+            struct Toggle {
+                const char* key;
+                const char* available;
+                const char* label;
+            };
+            const Toggle toggles[] = {
+                {"stabilization", "stabilization.available", "Bildstabilisierung"},
+                {"hdr", "hdr.available", "HDR-Video"},
+                {"mirror", nullptr, "Spiegeln"},
+                {"torch", "torch.available", "Licht"},
+            };
+            bool first = true;
+            for (const Toggle& toggle : toggles) {
+                if (toggle.available && !CamFlag(toggle.available)) continue;
+                if (!first) y += Px(4.0f);
+                first = false;
+                bool value = CamFlag(toggle.key);
+                float h = 0.0f;
+                const std::string id = std::string("##") + toggle.key;
+                if (SwitchRow(dl, id.c_str(), ImVec2(x, y), w, toggle.label, value, h)) {
+                    SetCamFlag(toggle.key, value);
+                    FlushCamCommands(true);
+                }
+                y += h;
+            }
+            return y - y0;
+        });
+    }
+
+    dl->ChannelsMerge();
+    // Platz am Ende, damit sich alles ganz hochscrollen lässt.
+    ImGui::SetCursorScreenPos(ImVec2(origin.x, cy));
+    ImGui::Dummy(ImVec2(1.0f, 1.0f));
+    ImGui::EndChild();
+    ImGui::PopStyleColor(4);
+    ImGui::PopStyleVar(2);
 }
 
 void App::DrawSetupPage(ImVec2 min, ImVec2 max) {

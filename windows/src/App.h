@@ -8,6 +8,8 @@
 #include "imgui.h"
 
 #include <chrono>
+#include <map>
+#include <string>
 
 // Die Oberfläche im Stil von Eidolon: Kopfzeile mit Reitern, die Seite „Kamera“ mit Vorschau,
 // Titel und Kennzahlen, und die Seite „Einrichtung“ als Karte mit einer Liste.
@@ -38,14 +40,41 @@ private:
     void DrawBackground(ImDrawList* dl, ImVec2 size, bool live);
     void DrawHeader(const StreamStatus& status, ImVec2 size);
     void DrawCameraPage(const StreamStatus& status, ImVec2 min, ImVec2 max);
+    // Verbunden und das iPhone meldet seinen Zustand: Vorschau mit Infozeile, rechts die Einstellungen.
+    void DrawStudio(const StreamStatus& status, ImVec2 min, ImVec2 max, bool live);
     void DrawPreview(ImDrawList* dl, ImVec2 min, ImVec2 max, const StreamStatus& status, bool live);
     float DrawHero(ImDrawList* dl, ImVec2 pos, float width, const StreamStatus& status, bool live);
+    // Hinweise (Signatur, Einrichtung) samt Knöpfen. Gibt die belegte Höhe zurück (0 = keine).
+    float DrawNotes(ImDrawList* dl, ImVec2 pos, float width, const StreamStatus& status, bool live);
+    float DrawInfoStrip(ImDrawList* dl, ImVec2 pos, float width, const StreamStatus& status, bool live);
+    void DrawSettings(ImVec2 min, ImVec2 max);
     void DrawStats(ImDrawList* dl, ImVec2 min, float width, float bottom, const StreamStatus& status);
     void DrawSteps(ImDrawList* dl, ImVec2 min, float width, float bottom);
     void DrawSetupPage(ImVec2 min, ImVec2 max);
     // Zeichnen jeweils eine Karte und geben die Höhe ihres Inhalts zurück.
     float DrawSetupList(ImDrawList* dl, ImVec2 pos, float width, float minHeight);
     float DrawSideloadGuide(ImDrawList* dl, ImVec2 pos, float width, float minHeight);
+
+    // Kamera-Zustand: eigene Änderungen gelten kurz vor dem gemeldeten Wert, bis das iPhone nachzieht.
+    const JsonValue* CamValue(const std::string& key) const;
+    bool CamHas(const std::string& key) const { return CamValue(key) != nullptr; }
+    double CamNumber(const std::string& key, double fallback = 0.0) const;
+    bool CamFlag(const std::string& key) const;
+    std::string CamString(const std::string& key) const;
+    void SetCamNumber(const std::string& key, double value);
+    void SetCamFlag(const std::string& key, bool value);
+    void SetCamString(const std::string& key, const std::string& value);
+    // Schickt gesammelte Änderungen (höchstens alle 80 ms, force = sofort).
+    void FlushCamCommands(bool force);
+
+    struct LocalValue {
+        JsonValue value;
+        std::chrono::steady_clock::time_point until;
+    };
+    struct SectionState {
+        bool open = true;
+        float height = 0.0f;
+    };
 
     StreamClient& m_client;
     FrameStore& m_store;
@@ -61,4 +90,11 @@ private:
     float m_setupHeight = 0.0f;
     float m_listHeight = 0.0f;
     float m_guideHeight = 0.0f;
+    float m_stripHeight = 0.0f;
+
+    std::map<std::string, JsonValue> m_cam;
+    std::map<std::string, LocalValue> m_local;
+    std::map<std::string, std::string> m_pending;  // Schlüssel → JSON-Wert
+    std::chrono::steady_clock::time_point m_lastSend;
+    std::map<std::string, SectionState> m_sections;
 };

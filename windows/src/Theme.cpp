@@ -504,6 +504,141 @@ bool Switch(const char* id, ImVec2 rightCenter, bool& value) {
     return clicked;
 }
 
+bool IconButton(const char* id, char32_t icon, ImVec2 center, float diameter, const char* tooltip) {
+    const ImVec2 half(diameter * 0.5f, diameter * 0.5f);
+    ImGui::SetCursorScreenPos(center - half);
+    const bool clicked = ImGui::InvisibleButton(id, half * 2.0f);
+    const bool hovered = ImGui::IsItemHovered();
+    if (hovered) ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
+    const float hover = Animate(ImGui::GetItemID(), hovered ? 1.0f : 0.0f, 18.0f);
+    ImDrawList* dl = ImGui::GetWindowDrawList();
+    dl->AddCircleFilled(center, diameter * 0.5f, A(Mix(White(0.0f), IM_COL32_WHITE, hover)), 32);
+    DrawIcon(dl, icon, center, diameter * 0.46f, Mix(kText3, kBg, hover));
+    if (tooltip && hover > 0.01f) {
+        // Kleine Beschriftung über dem Knopf, im Stil der Chips.
+        ImDrawList* top = ImGui::GetForegroundDrawList();
+        const float font = Px(12.5f);
+        const ImVec2 text = Measure(g_fonts.semibold, font, tooltip);
+        const ImVec2 box(text.x + Px(20.0f), text.y + Px(10.0f));
+        const ImVec2 min(center.x - box.x * 0.5f, center.y - diameter * 0.5f - Px(8.0f) - box.y);
+        top->AddRectFilled(min, min + box, WithAlpha(IM_COL32_WHITE, hover), box.y * 0.5f);
+        top->AddText(g_fonts.semibold, font, ImVec2(std::floor(min.x + Px(10.0f)), std::floor(min.y + Px(5.0f))),
+                     WithAlpha(kBg, hover), tooltip);
+    }
+    return clicked;
+}
+
+float SliderHeight() {
+    return Px(22.0f);
+}
+
+bool Slider(const char* id, ImVec2 pos, float width, float& value, bool& released, const SliderStyle& style) {
+    released = false;
+    const float height = SliderHeight();
+    const float knob = Px(16.0f);
+    // Der Knopf darf an den Enden nicht über die Spur hinausragen.
+    const float left = pos.x + knob * 0.5f;
+    const float travel = std::max(1.0f, width - knob);
+    ImGui::SetCursorScreenPos(pos);
+    ImGui::InvisibleButton(id, ImVec2(width, height));
+    const bool hovered = ImGui::IsItemHovered();
+    const bool active = ImGui::IsItemActive();
+    if (hovered || active) ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
+    released = ImGui::IsItemDeactivated();
+    bool changed = false;
+    if (active) {
+        const float next = std::clamp((ImGui::GetIO().MousePos.x - left) / travel, 0.0f, 1.0f);
+        if (next != value) {
+            value = next;
+            changed = true;
+        }
+    }
+    value = std::clamp(value, 0.0f, 1.0f);
+    const ImGuiID key = ImGui::GetItemID();
+    const float hover = Animate(key, hovered || active ? 1.0f : 0.0f, 18.0f);
+    const float press = Animate(key ^ 0x2f6b1c3du, active ? 1.0f : 0.0f, 22.0f);
+
+    ImDrawList* dl = ImGui::GetWindowDrawList();
+    const float centerY = pos.y + height * 0.5f;
+    const float track = Px(4.0f);
+    const ImVec2 trackMin(pos.x, centerY - track * 0.5f);
+    const ImVec2 trackMax(pos.x + width, centerY + track * 0.5f);
+    const float knobX = left + travel * value;
+    if (style.gradientLeft || style.gradientRight) {
+        // Verlauf ohne abgerundete Enden zeichnen, die Enden als Halbkreise ergänzen.
+        const float r = track * 0.5f;
+        dl->AddRectFilledMultiColor(ImVec2(trackMin.x + r, trackMin.y), ImVec2(trackMax.x - r, trackMax.y),
+                                    A(style.gradientLeft), A(style.gradientRight), A(style.gradientRight),
+                                    A(style.gradientLeft));
+        dl->AddCircleFilled(ImVec2(trackMin.x + r, centerY), r, A(style.gradientLeft), 12);
+        dl->AddCircleFilled(ImVec2(trackMax.x - r, centerY), r, A(style.gradientRight), 12);
+    } else {
+        dl->AddRectFilled(trackMin, trackMax, A(White(0.13f + 0.04f * hover)), track * 0.5f);
+        const float originX = left + travel * std::clamp(style.origin, 0.0f, 1.0f);
+        const float a = std::min(originX, knobX);
+        const float b = std::max(originX, knobX);
+        if (b - a > 0.5f) {
+            dl->AddRectFilled(ImVec2(a, trackMin.y), ImVec2(b, trackMax.y), A(kAccent), track * 0.5f);
+        }
+    }
+    // Knopf: wächst beim Darüberfahren, heller Saum beim Ziehen (wie Eidolons Fokus).
+    const float radius = knob * 0.5f * (1.0f + 0.12f * hover - 0.06f * press);
+    const ImVec2 center(knobX, centerY);
+    if (press > 0.01f) dl->AddCircleFilled(center, radius + Px(4.0f), A(White(0.16f * press)), 32);
+    dl->AddCircleFilled(center + ImVec2(0.0f, Px(1.0f)), radius, A(IM_COL32(0, 0, 0, 70)), 32);
+    dl->AddCircleFilled(center, radius, A(IM_COL32_WHITE), 32);
+    return changed;
+}
+
+float SegmentedHeight() {
+    return Px(34.0f);
+}
+
+bool Segmented(const char* id, ImVec2 pos, float width, const std::string_view* labels, int count, int& selected) {
+    if (count <= 0) return false;
+    const float height = SegmentedHeight();
+    const float inset = Px(3.0f);
+    const float segment = (width - inset * 2.0f) / static_cast<float>(count);
+    ImDrawList* dl = ImGui::GetWindowDrawList();
+    dl->AddRectFilled(pos, pos + ImVec2(width, height), A(White(0.07f)), height * 0.5f);
+
+    ImGui::PushID(id);
+    const ImGuiID slideKey = ImGui::GetID("##slide");
+    // Die weiße Pille gleitet zum gewählten Abschnitt; -1 = nichts gewählt.
+    const float target = selected >= 0 ? static_cast<float>(selected) : -1.0f;
+    const float slide = Animate(slideKey, target, 16.0f);
+    if (selected >= 0) {
+        const ImVec2 pillMin(pos.x + inset + segment * slide, pos.y + inset);
+        const ImVec2 pillMax(pillMin.x + segment, pos.y + height - inset);
+        dl->AddRectFilled(pillMin + ImVec2(0.0f, Px(1.0f)), pillMax + ImVec2(0.0f, Px(1.0f)), A(IM_COL32(0, 0, 0, 60)),
+                          (height - inset * 2.0f) * 0.5f);
+        dl->AddRectFilled(pillMin, pillMax, A(IM_COL32_WHITE), (height - inset * 2.0f) * 0.5f);
+    }
+    bool changed = false;
+    const float font = Px(13.5f);
+    for (int i = 0; i < count; ++i) {
+        const ImVec2 min(pos.x + inset + segment * static_cast<float>(i), pos.y);
+        ImGui::SetCursorScreenPos(min);
+        ImGui::PushID(i);
+        const bool clicked = ImGui::InvisibleButton("##segment", ImVec2(segment, height));
+        const bool hovered = ImGui::IsItemHovered();
+        ImGui::PopID();
+        if (hovered && i != selected) ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
+        if (clicked && i != selected) {
+            selected = i;
+            changed = true;
+        }
+        // Weiß hinterlegt: dunkle Schrift; sonst grau, beim Darüberfahren heller.
+        const float on = std::clamp(1.0f - std::fabs(slide - static_cast<float>(i)), 0.0f, 1.0f);
+        const ImU32 color = Mix(hovered ? kText : kText2, kBg, selected >= 0 ? on : 0.0f);
+        const ImVec2 text = Measure(g_fonts.semibold, font, labels[i]);
+        Text(dl, g_fonts.semibold, font, ImVec2(min.x + (segment - text.x) * 0.5f, pos.y + (height - text.y) * 0.5f),
+             color, labels[i]);
+    }
+    ImGui::PopID();
+    return changed;
+}
+
 namespace {
 struct ToneColors {
     ImU32 background;

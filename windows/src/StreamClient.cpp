@@ -46,6 +46,23 @@ StreamStatus StreamClient::Status() {
     return m_status;
 }
 
+std::map<std::string, JsonValue> StreamClient::CameraState(uint64_t* version) {
+    std::lock_guard lock(m_mutex);
+    if (version) *version = m_stateVersion;
+    return m_cameraState;
+}
+
+bool StreamClient::SendCommand(const std::string& json) {
+    SOCKET s = INVALID_SOCKET;
+    {
+        std::lock_guard lock(m_mutex);
+        s = m_socket;
+    }
+    if (s == INVALID_SOCKET) return false;
+    std::lock_guard sendLock(m_sendMutex);
+    return KrakznCam::SendCommand(s, json);
+}
+
 void StreamClient::SetState(StreamStatus::State state, const std::string& detail) {
     std::lock_guard lock(m_mutex);
     if (m_status.state != state || m_status.detail != detail) {
@@ -60,6 +77,10 @@ void StreamClient::SetState(StreamStatus::State state, const std::string& detail
         m_status.bitrate = 0;
         m_status.lens.clear();
         m_status.signatureExpires = 0;
+        if (!m_cameraState.empty()) {
+            m_cameraState.clear();
+            ++m_stateVersion;
+        }
     }
 }
 
@@ -171,7 +192,7 @@ void StreamClient::Serve(SOCKET s) {
         std::lock_guard lock(m_mutex);
         m_status.hardwareDecoding = decoder.IsHardware();
     }
-    KrakznCam::SendCommand(s, "{\"cmd\":\"keyframe\"}");
+    SendCommand("{\"cmd\":\"keyframe\"}");
 
     uint8_t type = 0;
     std::vector<uint8_t> payload;
@@ -183,6 +204,14 @@ void StreamClient::Serve(SOCKET s) {
     while (m_running && KrakznCam::ReadMessage(s, type, payload)) {
         if (type == KrakznCam::kMsgHello) {
             HandleHello(payload);
+        } else if (type == KrakznCam::kMsgState) {
+            std::map<std::string, JsonValue> state;
+            std::string_view json(reinterpret_cast<const char*>(payload.data()), payload.size());
+            if (ParseJsonObject(json, state)) {
+                std::lock_guard lock(m_mutex);
+                m_cameraState = std::move(state);
+                ++m_stateVersion;
+            }
         } else if (type == KrakznCam::kMsgVideoFrame && payload.size() > 9) {
             int64_t pts = static_cast<int64_t>(KrakznCam::ReadBE64(payload.data()));
             const uint8_t* data = payload.data() + 9;
@@ -204,11 +233,12 @@ void StreamClient::Serve(SOCKET s) {
                     m_status.detail.clear();
                 }
                 SetEvent(m_frameEvent);
+                if (m_extraFrameEvent) SetEvent(m_extraFrameEvent);
             });
             // Nach einem Fehler höchstens einmal pro Sekunde einen neuen Keyframe anfordern.
             if (!ok && Clock::now() - lastKeyframeRequest > std::chrono::seconds(1)) {
                 lastKeyframeRequest = Clock::now();
-                KrakznCam::SendCommand(s, "{\"cmd\":\"keyframe\"}");
+                SendCommand("{\"cmd\":\"keyframe\"}");
             }
         }
 

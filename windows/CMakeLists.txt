@@ -47,7 +47,7 @@ target_include_directories(krakzncam_core PUBLIC src)
 target_link_libraries(krakzncam_core PUBLIC
     ws2_32 d3d11 dxgi mfplat mfuuid wmcodecdspuuid windowscodecs ole32 shell32 advapi32 uuid)
 
-add_executable(krakzncam WIN32 src/main.cpp src/App.cpp src/Theme.cpp)
+add_executable(krakzncam WIN32 src/main.cpp src/App.cpp src/Theme.cpp res/krakzncam.rc)
 target_link_libraries(krakzncam PRIVATE krakzncam_core imgui d3dcompiler dwmapi)
 
 add_executable(krakzncam_iconmaker tools/IconMaker.cpp)

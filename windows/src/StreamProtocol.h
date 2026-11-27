@@ -11,6 +11,7 @@ namespace KrakznCam {
 constexpr uint16_t kPort = 7878;
 constexpr uint8_t kMsgHello = 0x01;
 constexpr uint8_t kMsgVideoFrame = 0x02;
+constexpr uint8_t kMsgState = 0x03;
 constexpr uint8_t kMsgCommand = 0x10;
 constexpr uint32_t kMaxMessage = 64u * 1024 * 1024;
 

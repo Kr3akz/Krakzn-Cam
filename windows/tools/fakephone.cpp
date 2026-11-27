@@ -7,6 +7,7 @@
 //
 // Danach: krakzncam.exe --direct 127.0.0.1:17878
 
+#include "Json.h"
 #include "Net.h"
 #include "StreamProtocol.h"
 #include "TestScene.h"
@@ -23,12 +24,16 @@
 #include <wmcodecdsp.h>
 #include <wrl/client.h>
 
+#include <algorithm>
 #include <atomic>
 #include <chrono>
+#include <cmath>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <ctime>
+#include <map>
+#include <mutex>
 #include <string>
 #include <thread>
 #include <utility>
@@ -199,10 +204,176 @@ private:
     std::vector<uint8_t> m_sequenceHeader;
 };
 
+std::mutex g_sendMutex;  // Bilder und Zustand kommen aus zwei Threads
+
 bool SendMessageTo(SOCKET s, uint8_t type, const std::vector<uint8_t>& payload) {
     std::vector<uint8_t> message = KrakznCam::BuildMessage(type, payload.data(), payload.size());
+    std::lock_guard lock(g_sendMutex);
     return SendAll(s, message.data(), message.size());
 }
+
+// Ausgedachte Kamera mit denselben Schlüsseln wie die iPhone-App (STATE, siehe docs/protokoll.md).
+// Die Automatik regelt sichtbar nach, und Helligkeit, Weißabgleich und Spiegeln wirken aufs Testbild.
+class FakeCamera {
+public:
+    explicit FakeCamera(UINT fps) {
+        auto number = [&](const char* key, double value) { Set(key, JsonValue{JsonValue::Type::Number, value}); };
+        auto flag = [&](const char* key, bool value) {
+            JsonValue v;
+            v.type = JsonValue::Type::Bool;
+            v.boolean = value;
+            Set(key, v);
+        };
+        auto text = [&](const char* key, const char* value) {
+            JsonValue v;
+            v.type = JsonValue::Type::String;
+            v.text = value;
+            Set(key, v);
+        };
+        text("lens", "wide");
+        text("lenses", "wide,ultraWide,telephoto,front");
+        text("resolution", "hd1080");
+        number("fps", fps);
+        text("quality", "high");
+        number("zoom", 1.0);
+        number("zoom.max", 10.0);
+        flag("exposure.auto", true);
+        flag("exposure.manual", true);
+        number("iso", 125);
+        number("iso.min", 32);
+        number("iso.max", 3072);
+        number("shutter", 1.0 / 60.0);
+        number("shutter.min", 1.0 / 32000.0);
+        number("shutter.max", 1.0 / fps);
+        number("ev", 0.0);
+        number("ev.min", -3.0);
+        number("ev.max", 3.0);
+        flag("wb.auto", true);
+        flag("wb.manual", true);
+        number("wb.temp", 5200);
+        number("wb.tint", 4);
+        flag("focus.auto", true);
+        flag("focus.manual", true);
+        number("focus.pos", 0.62);
+        flag("torch", false);
+        flag("torch.available", true);
+        flag("hdr", false);
+        flag("hdr.available", true);
+        flag("stabilization", true);
+        flag("stabilization.available", true);
+        flag("mirror", false);
+    }
+
+    // Übernimmt einen "set"-Befehl wie die App: Werte schalten die jeweilige Automatik aus.
+    void Apply(const std::map<std::string, JsonValue>& command) {
+        std::lock_guard lock(m_mutex);
+        for (const auto& [key, value] : command) {
+            if (key == "cmd" || key == "lenses" || key.ends_with(".min") || key.ends_with(".max") ||
+                key.ends_with(".available") || key.ends_with(".manual")) {
+                continue;
+            }
+            auto it = m_values.find(key);
+            if (it == m_values.end() || it->second.type != value.type) continue;
+            it->second = value;
+            if (key == "iso" || key == "shutter") m_values["exposure.auto"].boolean = false;
+            if (key == "wb.temp" || key == "wb.tint") m_values["wb.auto"].boolean = false;
+            if (key == "focus.pos") m_values["focus.auto"].boolean = false;
+        }
+        m_dirty = true;
+    }
+
+    // Die Automatik „regelt nach“: kleine Schwankungen, damit die Anzeige lebt.
+    void Tick(double seconds) {
+        std::lock_guard lock(m_mutex);
+        auto set = [&](const char* key, double value) {
+            JsonValue& v = m_values[key];
+            if (v.number != value) {
+                v.number = value;
+                m_dirty = true;
+            }
+        };
+        if (m_values["exposure.auto"].boolean) {
+            const double ev = m_values["ev"].number;
+            set("iso", std::round(125.0 * std::pow(2.0, ev) * (1.0 + 0.08 * std::sin(seconds * 0.9))));
+            set("shutter", 1.0 / 60.0);
+        }
+        if (m_values["wb.auto"].boolean) set("wb.temp", std::round((5200.0 + 120.0 * std::sin(seconds * 0.4)) / 10.0) * 10.0);
+        if (m_values["focus.auto"].boolean) set("focus.pos", std::round((0.62 + 0.03 * std::sin(seconds * 1.3)) * 1000.0) / 1000.0);
+    }
+
+    // Flaches JSON, nur wenn sich seit dem letzten Mal etwas geändert hat.
+    bool TakeState(std::string& json) {
+        std::lock_guard lock(m_mutex);
+        if (!m_dirty) return false;
+        m_dirty = false;
+        json = "{";
+        for (const auto& [key, value] : m_values) {
+            if (json.size() > 1) json += ",";
+            json += "\"" + key + "\":";
+            char number[32];
+            switch (value.type) {
+            case JsonValue::Type::Bool: json += value.boolean ? "true" : "false"; break;
+            case JsonValue::Type::String: json += "\"" + value.text + "\""; break;
+            default:
+                snprintf(number, sizeof(number), "%.6g", value.number);
+                json += number;
+                break;
+            }
+        }
+        json += "}";
+        return true;
+    }
+
+    // Wirkung aufs Testbild (NV12, Videobereich): Helligkeit, Farbstich, Spiegeln.
+    void ApplyLook(std::vector<uint8_t>& nv12, UINT width, UINT height) {
+        double gain = 1.0;
+        double warm = 0.0;
+        double tint = 0.0;
+        bool mirror = false;
+        {
+            std::lock_guard lock(m_mutex);
+            if (m_values["exposure.auto"].boolean) {
+                gain = std::pow(2.0, m_values["ev"].number * 0.5);
+            } else {
+                const double exposure = m_values["iso"].number * m_values["shutter"].number;
+                gain = std::sqrt(exposure / (125.0 / 60.0));
+            }
+            if (!m_values["wb.auto"].boolean) {
+                // Niedrige Kelvin-Werte: die Kamera gleicht warmes Licht aus, das Bild wird kühler.
+                warm = (m_values["wb.temp"].number - 5200.0) / 2800.0;
+                tint = m_values["wb.tint"].number / 100.0;
+            }
+            mirror = m_values["mirror"].boolean;
+        }
+        gain = std::clamp(gain, 0.15, 4.0);
+        if (std::fabs(gain - 1.0) > 0.01) {
+            uint8_t table[256];
+            for (int i = 0; i < 256; ++i) table[i] = static_cast<uint8_t>(std::clamp(16.0 + (i - 16) * gain, 16.0, 235.0));
+            for (size_t i = 0, n = static_cast<size_t>(width) * height; i < n; ++i) nv12[i] = table[nv12[i]];
+        }
+        if (warm != 0.0 || tint != 0.0) {
+            const int du = static_cast<int>(-18.0 * warm + 6.0 * tint);  // Cb: blau
+            const int dv = static_cast<int>(18.0 * warm + 8.0 * tint);   // Cr: rot
+            uint8_t* uv = nv12.data() + static_cast<size_t>(width) * height;
+            for (size_t i = 0, n = static_cast<size_t>(width) * height / 2; i < n; i += 2) {
+                uv[i] = static_cast<uint8_t>(std::clamp(uv[i] + du, 16, 240));
+                uv[i + 1] = static_cast<uint8_t>(std::clamp(uv[i + 1] + dv, 16, 240));
+            }
+        }
+        if (mirror) {
+            for (UINT y = 0; y < height; ++y) std::reverse(nv12.begin() + y * width, nv12.begin() + (y + 1) * width);
+            uint16_t* uv = reinterpret_cast<uint16_t*>(nv12.data() + static_cast<size_t>(width) * height);
+            for (UINT y = 0; y < height / 2; ++y) std::reverse(uv + y * (width / 2), uv + (y + 1) * (width / 2));
+        }
+    }
+
+private:
+    void Set(const char* key, const JsonValue& value) { m_values[key] = value; }
+
+    std::mutex m_mutex;
+    std::map<std::string, JsonValue> m_values;
+    bool m_dirty = true;
+};
 
 void ServeClient(SOCKET client, const Options& options) {
     // HELLO wie von der iPhone-App, mit einem Ablaufdatum in 5 Tagen zum Testen der Anzeige.
@@ -215,20 +386,39 @@ void ServeClient(SOCKET client, const Options& options) {
     std::vector<uint8_t> helloPayload(hello, hello + strlen(hello));
     if (!SendMessageTo(client, KrakznCam::kMsgHello, helloPayload)) return;
 
-    // Befehle vom PC (z. B. "keyframe") in einem eigenen Thread lesen.
+    // Befehle vom PC ("keyframe", "set") in einem eigenen Thread lesen.
+    FakeCamera camera(options.fps);
     std::atomic<bool> forceKeyframe{true};
     std::atomic<bool> connected{true};
     std::thread reader([&] {
         uint8_t type = 0;
         std::vector<uint8_t> payload;
         while (KrakznCam::ReadMessage(client, type, payload)) {
+            if (type != KrakznCam::kMsgCommand) continue;
             std::string text(payload.begin(), payload.end());
-            if (type == KrakznCam::kMsgCommand && text.find("keyframe") != std::string::npos) {
-                printf("Befehl erhalten: %s\n", text.c_str());
-                forceKeyframe = true;
-            }
+            std::map<std::string, JsonValue> command;
+            if (!ParseJsonObject(text, command)) continue;
+            const auto cmd = command.find("cmd");
+            if (cmd == command.end()) continue;
+            printf("Befehl erhalten: %s\n", text.c_str());
+            fflush(stdout);
+            if (cmd->second.text == "keyframe") forceKeyframe = true;
+            else if (cmd->second.text == "set") camera.Apply(command);
         }
         connected = false;
+    });
+    // Zustand viermal pro Sekunde melden, aber nur bei Änderungen (wie die App).
+    std::thread stateSender([&] {
+        const auto start = std::chrono::steady_clock::now();
+        std::string json;
+        while (connected) {
+            camera.Tick(std::chrono::duration<double>(std::chrono::steady_clock::now() - start).count());
+            if (camera.TakeState(json)) {
+                std::vector<uint8_t> statePayload(json.begin(), json.end());
+                if (!SendMessageTo(client, KrakznCam::kMsgState, statePayload)) break;
+            }
+            for (int i = 0; i < 5 && connected; ++i) std::this_thread::sleep_for(std::chrono::milliseconds(50));
+        }
     });
 
     Encoder encoder;
@@ -243,9 +433,12 @@ void ServeClient(SOCKET client, const Options& options) {
         uint64_t windowFrames = 0;
         uint64_t windowBytes = 0;
         std::vector<EncodedFrame> encoded;
+        std::vector<uint8_t> picture;
         for (int64_t index = 0; connected; ++index) {
             encoded.clear();
-            if (!encoder.Encode(scene.Frame(index), index, forceKeyframe.exchange(false), encoded)) break;
+            picture = scene.Frame(index);
+            camera.ApplyLook(picture, options.width, options.height);
+            if (!encoder.Encode(picture, index, forceKeyframe.exchange(false), encoded)) break;
             bool sendFailed = false;
             for (const EncodedFrame& frame : encoded) {
                 std::vector<uint8_t> payload;
@@ -274,8 +467,10 @@ void ServeClient(SOCKET client, const Options& options) {
             std::this_thread::sleep_until(start + frameDuration * (index + 1));
         }
     }
+    connected = false;
     shutdown(client, SD_BOTH);
     reader.join();
+    stateSender.join();
 }
 
 }  // namespace

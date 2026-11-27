@@ -353,6 +353,10 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand) {
     windowClass.lpfnWndProc = WndProc;
     windowClass.hInstance = instance;
     windowClass.hCursor = LoadCursorW(nullptr, IDC_ARROW);
+    windowClass.hIcon = LoadIconW(instance, MAKEINTRESOURCEW(1));
+    windowClass.hIconSm = static_cast<HICON>(LoadImageW(instance, MAKEINTRESOURCEW(1), IMAGE_ICON,
+                                                        GetSystemMetrics(SM_CXSMICON),
+                                                        GetSystemMetrics(SM_CYSMICON), 0));
     windowClass.hbrBackground = CreateSolidBrush(RGB(11, 11, 13));  // kein weißes Aufblitzen beim Vergrößern
     windowClass.lpszClassName = L"KrakznCamWindow";
     RegisterClassExW(&windowClass);

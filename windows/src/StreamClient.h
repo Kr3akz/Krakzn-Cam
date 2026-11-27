@@ -1,5 +1,6 @@
 #pragma once
 #include "FrameStore.h"
+#include "Json.h"
 #include "Net.h"
 
 #include <d3d11.h>
@@ -7,6 +8,7 @@
 
 #include <atomic>
 #include <cstdint>
+#include <map>
 #include <mutex>
 #include <string>
 #include <thread>
@@ -53,6 +55,16 @@ public:
     void Stop();
     StreamStatus Status();
 
+    // Zweites Ereignis, das bei jedem neuen Bild gesetzt wird (für die virtuelle Kamera).
+    void SetExtraFrameEvent(HANDLE event) { m_extraFrameEvent = event; }
+
+    // Letzter Kamera-Zustand vom iPhone (STATE, flach). Leer, solange keiner da ist.
+    // version zählt bei jedem neuen Zustand hoch.
+    std::map<std::string, JsonValue> CameraState(uint64_t* version = nullptr);
+
+    // Schickt einen JSON-Befehl ans iPhone. Thread-sicher; false, wenn nicht verbunden.
+    bool SendCommand(const std::string& json);
+
 private:
     void Run();
     SOCKET OpenConnection();
@@ -73,4 +85,8 @@ private:
     std::mutex m_mutex;
     StreamStatus m_status;
     SOCKET m_socket = INVALID_SOCKET;
+    std::map<std::string, JsonValue> m_cameraState;
+    uint64_t m_stateVersion = 0;
+    std::mutex m_sendMutex;  // Senden aus UI- und Empfangs-Thread nacheinander
+    HANDLE m_extraFrameEvent = nullptr;
 };
