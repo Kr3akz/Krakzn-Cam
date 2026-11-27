@@ -123,7 +123,7 @@ struct ItemLook {
 
 ItemLook LookFor(const SetupItem& item) {
     char32_t icon = Icon::Info;
-    if (item.key == "windows") icon = Icon::Windows;
+    if (item.key == "windows") icon = Icon::Monitor;
     else if (item.key == "itunes") icon = 0xE8D6;  // Audio
     else if (item.key == "icloud") icon = 0xE753;  // Cloud
     else if (item.key == "usb") icon = Icon::Usb;
@@ -214,18 +214,23 @@ void App::Draw() {
 
 void App::DrawBackground(ImDrawList* dl, ImVec2 size, bool live) {
     Backdrop(dl, ImVec2(0.0f, 0.0f), size);
-    // Während der Übertragung liegt das Kamerabild gedimmt dahinter, wie Eidolons Key-Art.
+    // Während der Übertragung leuchtet das Kamerabild weich dahinter, wie Eidolons Key-Art:
+    // eine winzige Fassung des Bildes (siehe VideoView), groß gezogen und damit unscharf.
     const float ambient = Animate(0x6B1A7E01u, live ? 1.0f : 0.0f, 3.0f);
-    if (ambient > 0.01f && m_video.HasFrame() && m_video.Width() > 0) {
-        const float width = static_cast<float>(m_video.Width());
-        const float height = static_cast<float>(m_video.Height());
-        const float fill = std::max(size.x / width, size.y / height) * 1.04f;
-        const ImVec2 drawn(width * fill, height * fill);
+    ID3D11ShaderResourceView* glow = m_video.AmbientSrv() ? m_video.AmbientSrv() : m_video.Srv();
+    if (ambient > 0.01f && m_video.HasFrame() && glow) {
+        const float aspect = static_cast<float>(m_video.Width()) / static_cast<float>(std::max(1u, m_video.Height()));
+        const float fill = std::max(size.x, size.y * aspect) * 1.06f;
+        const ImVec2 drawn(fill, fill / aspect);
         const ImVec2 topLeft((size.x - drawn.x) * 0.5f, (size.y - drawn.y) * 0.5f);
-        dl->AddImage(TextureOf(m_video.Srv()), topLeft, topLeft + drawn, ImVec2(0, 0), ImVec2(1, 1),
-                     White(0.34f * ambient));
-        dl->AddRectFilledMultiColor(ImVec2(0, 0), size, WithAlpha(kBg, 0.55f * ambient), WithAlpha(kBg, 0.55f * ambient),
-                                    WithAlpha(kBg, 0.9f * ambient), WithAlpha(kBg, 0.9f * ambient));
+        dl->AddImage(TextureOf(glow), topLeft, topLeft + drawn, ImVec2(0, 0), ImVec2(1, 1), White(0.5f * ambient));
+        const float split = size.y * 0.3f;
+        dl->AddRectFilledMultiColor(ImVec2(0, 0), ImVec2(size.x, split), WithAlpha(kBg, 0.72f * ambient),
+                                    WithAlpha(kBg, 0.72f * ambient), WithAlpha(kBg, 0.42f * ambient),
+                                    WithAlpha(kBg, 0.42f * ambient));
+        dl->AddRectFilledMultiColor(ImVec2(0, split), size, WithAlpha(kBg, 0.42f * ambient),
+                                    WithAlpha(kBg, 0.42f * ambient), WithAlpha(kBg, 0.9f * ambient),
+                                    WithAlpha(kBg, 0.9f * ambient));
     }
 }
 
@@ -268,14 +273,15 @@ void App::DrawCameraPage(const StreamStatus& status, ImVec2 min, ImVec2 max) {
     const bool live = status.state == StreamStatus::State::Streaming && m_video.HasFrame();
     const float pad = PagePadding(max.x - min.x);
     const float gap = Px(40.0f);
-    const float top = min.y + Px(6.0f);
     const float bottom = max.y - pad * 0.8f;
 
     const float column = std::clamp((max.x - min.x) * 0.31f, Px(330.0f), Px(440.0f));
     const float availableWidth = (max.x - pad) - (min.x + pad) - column - gap;
-    const float availableHeight = bottom - top;
+    const float availableHeight = bottom - (min.y + Px(6.0f));
     const float cardWidth = std::max(Px(200.0f), std::min(availableWidth, availableHeight * 16.0f / 9.0f));
     const float cardHeight = cardWidth * 9.0f / 16.0f;
+    // Bleibt in der Höhe Platz, sitzt der Inhalt etwas über der Mitte statt oben zu kleben.
+    const float top = min.y + Px(6.0f) + std::max(0.0f, availableHeight - cardHeight) * 0.42f;
     const ImVec2 cardMin(min.x + pad, top);
     const ImVec2 cardMax(cardMin.x + cardWidth, top + cardHeight);
     DrawPreview(dl, cardMin, cardMax, status, live);

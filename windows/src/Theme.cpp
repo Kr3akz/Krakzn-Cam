@@ -474,7 +474,7 @@ bool Tab(const char* id, std::string_view label, ImVec2 pos, bool active, bool b
     const ImU32 color = active ? kText : Mix(kText3, kText2, hover);
     Text(dl, font, size, pos + padding, color, label);
     if (badge) {
-        dl->AddCircleFilled(ImVec2(pos.x + padding.x + text.x + Px(5.0f), pos.y + padding.y + Px(4.0f)), Px(3.5f),
+        dl->AddCircleFilled(ImVec2(pos.x + padding.x + text.x + Px(7.0f), pos.y + padding.y + Px(4.0f)), Px(3.5f),
                             A(kRed));
     }
     return clicked;

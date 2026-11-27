@@ -63,7 +63,7 @@ constexpr char32_t Video = 0xE714;
 constexpr char32_t Phone = 0xE8EA;
 constexpr char32_t Settings = 0xE713;
 constexpr char32_t Calendar = 0xE787;
-constexpr char32_t Windows = 0xE782;
+constexpr char32_t Monitor = 0xE7F4;
 constexpr char32_t Usb = 0xE88E;
 constexpr char32_t Camera = 0xE722;
 }  // namespace Icon
