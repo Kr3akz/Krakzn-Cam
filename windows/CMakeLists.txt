@@ -1,5 +1,12 @@
 cmake_minimum_required(VERSION 3.24)
-project(KrakznCam VERSION 0.1.0 LANGUAGES CXX)
+# Version: beim Release aus dem Tag (z. B. v0.2.0 -> -DKRAKZNCAM_RELEASE_VERSION=0.2.0), sonst Entwicklungsstand.
+set(KRAKZNCAM_RELEASE_VERSION "" CACHE STRING "Version aus dem Release-Tag, z. B. 0.2.0")
+if(KRAKZNCAM_RELEASE_VERSION)
+    set(KRAKZNCAM_PROJECT_VERSION ${KRAKZNCAM_RELEASE_VERSION})
+else()
+    set(KRAKZNCAM_PROJECT_VERSION 0.1.0)
+endif()
+project(KrakznCam VERSION ${KRAKZNCAM_PROJECT_VERSION} LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -33,6 +40,7 @@ set_target_properties(imgui PROPERTIES COMPILE_WARNING_AS_ERROR OFF)
 add_library(krakzncam_core STATIC
     src/AutoRenew.cpp
     src/FrameStore.cpp
+    src/Http.cpp
     src/H264Decoder.cpp
     src/Json.cpp
     src/Log.cpp
@@ -41,15 +49,20 @@ add_library(krakzncam_core STATIC
     src/SetupCheck.cpp
     src/Snapshot.cpp
     src/StreamClient.cpp
+    src/Updater.cpp
     src/Usbmux.cpp
     src/VideoView.cpp
     src/VirtualCamera.cpp)
 target_include_directories(krakzncam_core PUBLIC src)
 target_link_libraries(krakzncam_core PUBLIC
-    ws2_32 d3d11 dxgi mfplat mfuuid wmcodecdspuuid windowscodecs ole32 shell32 advapi32 uuid)
+    ws2_32 d3d11 dxgi mfplat mfuuid wmcodecdspuuid windowscodecs ole32 shell32 advapi32 uuid winhttp bcrypt)
 
-add_executable(krakzncam WIN32 src/main.cpp src/App.cpp src/Theme.cpp res/krakzncam.rc)
-target_link_libraries(krakzncam PRIVATE krakzncam_core imgui d3dcompiler dwmapi)
+# Oberfläche: Fenster mit eigener Titelleiste und KrakznCam-Design (Programm und Setup).
+add_library(krakzncam_ui STATIC src/UiHost.cpp src/Theme.cpp)
+target_link_libraries(krakzncam_ui PUBLIC imgui krakzncam_core dwmapi)
+
+add_executable(krakzncam WIN32 src/main.cpp src/App.cpp res/krakzncam.rc)
+target_link_libraries(krakzncam PRIVATE krakzncam_core krakzncam_ui d3dcompiler)
 
 # Virtuelle Kamera (Media Source für den Frame-Server-Dienst von Windows 11).
 add_library(krakzncam_vcam SHARED vcam/VirtualCamera.cpp vcam/Placeholder.cpp vcam/krakzncam_vcam.def)
@@ -60,6 +73,24 @@ target_link_libraries(krakzncam_vcam PRIVATE mfplat mfuuid advapi32 gdi32 ole32)
 add_executable(krakzncam_vcamtest tools/vcamtest.cpp)
 target_include_directories(krakzncam_vcamtest PRIVATE src)
 target_link_libraries(krakzncam_vcamtest PRIVATE mfplat mfuuid mfreadwrite mf windowscodecs ole32)
+
+# Setup (KrakznCam-Setup.exe): bringt Programm, Kamera-DLL und, falls angegeben, die iPhone-App mit.
+set(KRAKZNCAM_IPA "" CACHE FILEPATH "iPhone-App (.ipa), die ins Setup gepackt wird (optional)")
+set(KRAKZNCAM_PAYLOAD_RC "${CMAKE_BINARY_DIR}/payload/$<CONFIG>/payload.rc")
+set(KRAKZNCAM_PAYLOAD "1 ICON \"${CMAKE_CURRENT_SOURCE_DIR}/res/krakzncam.ico\"\n")
+string(APPEND KRAKZNCAM_PAYLOAD "101 RCDATA \"$<TARGET_FILE:krakzncam>\"\n")
+string(APPEND KRAKZNCAM_PAYLOAD "102 RCDATA \"$<TARGET_FILE:krakzncam_vcam>\"\n")
+if(KRAKZNCAM_IPA AND EXISTS "${KRAKZNCAM_IPA}")
+    file(TO_CMAKE_PATH "${KRAKZNCAM_IPA}" KRAKZNCAM_IPA_PATH)
+    string(APPEND KRAKZNCAM_PAYLOAD "103 RCDATA \"${KRAKZNCAM_IPA_PATH}\"\n")
+    message(STATUS "Setup enthält die iPhone-App: ${KRAKZNCAM_IPA_PATH}")
+endif()
+file(GENERATE OUTPUT "${KRAKZNCAM_PAYLOAD_RC}" CONTENT "${KRAKZNCAM_PAYLOAD}")
+add_executable(krakzncam_setup WIN32 setup/SetupMain.cpp setup/Installer.cpp "${KRAKZNCAM_PAYLOAD_RC}")
+target_include_directories(krakzncam_setup PRIVATE setup)
+target_link_libraries(krakzncam_setup PRIVATE krakzncam_core krakzncam_ui)
+add_dependencies(krakzncam_setup krakzncam krakzncam_vcam)
+set_target_properties(krakzncam_setup PROPERTIES OUTPUT_NAME "KrakznCam-Setup")
 
 add_executable(krakzncam_iconmaker tools/IconMaker.cpp)
 target_link_libraries(krakzncam_iconmaker PRIVATE d2d1 windowscodecs ole32)

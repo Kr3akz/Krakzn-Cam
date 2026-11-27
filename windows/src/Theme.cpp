@@ -417,7 +417,7 @@ float ButtonWidth(std::string_view label, char32_t icon, ButtonSize size) {
     return ButtonPadding(size) * 2.0f + iconWidth + Measure(g_fonts.semibold, font, label).x;
 }
 
-bool Button(const char* id, std::string_view label, char32_t icon, ImVec2 pos, ButtonSize size) {
+bool Button(const char* id, std::string_view label, char32_t icon, ImVec2 pos, ButtonSize size, bool accent) {
     const ImVec2 box(ButtonWidth(label, icon, size), ButtonHeight(size));
     ImGui::SetCursorScreenPos(pos);
     const bool clicked = ImGui::InvisibleButton(id, box);
@@ -440,10 +440,11 @@ bool Button(const char* id, std::string_view label, char32_t icon, ImVec2 pos, B
         dl->AddRectFilled(center - half - ImVec2(ring, ring), center + half + ImVec2(ring, ring),
                           A(White(0.16f * hover)), radius + ring);
     }
-    dl->AddRectFilled(center - half, center + half, A(Mix(White(0.14f), IM_COL32_WHITE, hover)), radius);
+    dl->AddRectFilled(center - half, center + half, A(Mix(accent ? kAccent : White(0.14f), IM_COL32_WHITE, hover)),
+                      radius);
 
     const float font = ButtonFontSize(size) * scale;
-    const ImU32 color = Mix(kText, kBg, hover);
+    const ImU32 color = Mix(accent ? IM_COL32_WHITE : kText, kBg, hover);
     const ImVec2 textSize = Measure(g_fonts.semibold, font, label);
     const float iconSize = icon ? font * 1.15f : 0.0f;
     const float gap = icon ? Px(8.0f) * scale : 0.0f;
@@ -454,6 +455,24 @@ bool Button(const char* id, std::string_view label, char32_t icon, ImVec2 pos, B
     }
     Text(dl, g_fonts.semibold, font, ImVec2(x, center.y - textSize.y * 0.5f), color, label);
     return clicked;
+}
+
+void Logo(ImDrawList* dl, ImVec2 center, float radius) {
+    // Wie das App-Symbol (IconMaker): weißer Rahmen, dunkles Glas, blauer Ring, Lichtpunkt.
+    const int segments = std::clamp(static_cast<int>(radius * 1.6f), 24, 96);
+    dl->AddCircleFilled(center, radius, A(IM_COL32(238, 238, 242, 255)), segments);
+    dl->AddCircleFilled(center, radius * 0.80f, A(IM_COL32(9, 12, 22, 255)), segments);
+    dl->AddCircle(center, radius * 0.47f, A(kAccent), segments, std::max(1.0f, radius * 0.11f));
+    dl->AddCircleFilled(center + ImVec2(-radius * 0.30f, -radius * 0.32f), radius * 0.10f, A(IM_COL32(240, 244, 255, 230)),
+                        16);
+}
+
+float Wordmark(ImDrawList* dl, ImVec2 pos, float size) {
+    const float first = Measure(g_fonts.light, size, "Krakzn").x;
+    const float second = Measure(g_fonts.light, size, "Cam").x;
+    Text(dl, g_fonts.light, size, pos, kText, "Krakzn");
+    Text(dl, g_fonts.light, size, ImVec2(pos.x + first, pos.y), kText2, "Cam");
+    return first + second;
 }
 
 bool Tab(const char* id, std::string_view label, ImVec2 pos, bool active, bool badge, float& width) {

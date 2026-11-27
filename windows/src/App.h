@@ -3,6 +3,8 @@
 #include "FrameStore.h"
 #include "SetupCheck.h"
 #include "StreamClient.h"
+#include "UiHost.h"
+#include "Updater.h"
 #include "VideoView.h"
 #include "VirtualCamera.h"
 
@@ -20,8 +22,8 @@ public:
 
     // dpiScale: Skalierung des Bildschirms (1,0 = 100 %). Die Oberfläche wächst zusätzlich mit dem Fenster.
     // selftest: nichts an Windows oder Sideloadly verändern.
-    App(ID3D11Device* device, StreamClient& client, FrameStore& store, VirtualCamera& camera, Page initialPage,
-        float dpiScale, bool selftest);
+    App(UiHost& host, StreamClient& client, FrameStore& store, VirtualCamera& camera, Updater& updater,
+        Page initialPage, float dpiScale, bool selftest);
 
     // Fenster wurde aktiviert: Einrichtung neu prüfen (z. B. nach einer Installation).
     void OnActivated();
@@ -40,6 +42,8 @@ private:
 
     void DrawBackground(ImDrawList* dl, ImVec2 size, bool live);
     void DrawHeader(const StreamStatus& status, ImVec2 size);
+    // Update-Knopf bzw. Fortschritt rechts in der Kopfzeile, rechtsbündig an right.
+    void DrawUpdateBadge(ImDrawList* dl, float right, float centerY);
     void DrawCameraPage(const StreamStatus& status, ImVec2 min, ImVec2 max);
     // Verbunden und das iPhone meldet seinen Zustand: Vorschau mit Infozeile, rechts die Einstellungen.
     void DrawStudio(const StreamStatus& status, ImVec2 min, ImVec2 max, bool live);
@@ -79,9 +83,12 @@ private:
         float height = 0.0f;
     };
 
+    UiHost& m_host;
     StreamClient& m_client;
     FrameStore& m_store;
     VirtualCamera& m_camera;
+    Updater& m_updater;
+    bool m_updateLaunched = false;
     VirtualCamera::Status m_cameraStatus;  // je Bild einmal abgefragt
     VideoView m_video;
     SetupReport m_setup;

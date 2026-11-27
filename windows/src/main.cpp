@@ -6,11 +6,14 @@
 //   krakzncam.exe --check --log datei.txt       nur Einrichtung prüfen und ins Protokoll schreiben
 //   krakzncam.exe --install-camera              virtuelle Kamera einrichten (braucht Administratorrechte)
 //   krakzncam.exe --uninstall-camera            virtuelle Kamera wieder entfernen
+//   krakzncam.exe --cleanup                     vor dem Deinstallieren: Sideloadly-Autostart zurückgeben
+//   krakzncam.exe --update-feed URL             Updates von einer anderen Adresse suchen (Test)
 //   krakzncam.exe --selftest --frames 60 --snapshot bild.png --screenshot ui.png --log datei.txt
 //                                              unsichtbar laufen, bis N Bilder dekodiert sind, dann speichern
 //                [--click x,y] [--wheel x,y,menge]   danach Mausklicks bzw. Mausrad simulieren (mehrfach möglich)
 
 #include "App.h"
+#include "AutoRenew.h"
 #include "FrameStore.h"
 #include "Log.h"
 #include "Net.h"
@@ -18,17 +21,13 @@
 #include "Snapshot.h"
 #include "StreamClient.h"
 #include "TextUtil.h"
-#include "Theme.h"
+#include "UiHost.h"
+#include "Updater.h"
 #include "VirtualCamera.h"
 
 #include "imgui.h"
-#include "imgui_impl_dx11.h"
-#include "imgui_impl_win32.h"
 
 #include <windows.h>
-#include <d3d11_4.h>
-#include <dwmapi.h>
-#include <dxgi1_2.h>
 #include <mfapi.h>
 #include <shellapi.h>
 #include <wrl/client.h>
@@ -36,11 +35,8 @@
 #include <cfloat>
 #include <chrono>
 #include <cstdlib>
-#include <functional>
 #include <string>
 #include <vector>
-
-extern IMGUI_IMPL_API LRESULT ImGui_ImplWin32_WndProcHandler(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam);
 
 using Microsoft::WRL::ComPtr;
 
@@ -53,8 +49,10 @@ struct Options {
     bool check = false;
     bool installCamera = false;    // --install-camera: virtuelle Kamera einrichten (Administrator)
     bool uninstallCamera = false;  // --uninstall-camera: wieder entfernen (Administrator)
+    bool cleanup = false;          // --cleanup: Änderungen an Sideloadly zurücknehmen (Deinstallation)
     bool vcam = false;             // Selbsttest: virtuelle Kamera anmelden
     bool vcamFeed = false;         // Selbsttest: virtuelle Kamera nur mit Bildern versorgen
+    std::wstring updateFeed;       // leer = GitHub-Releases
     bool selftest = false;
     int frames = 60;        // Selbsttest: so viele Bilder abwarten (0 = nur Zeit ablaufen lassen)
     double timeout = 30.0;  // Selbsttest: höchstens so viele Sekunden
@@ -72,20 +70,6 @@ struct Options {
     };
     std::vector<InputAction> actions;
 };
-
-struct Graphics {
-    ComPtr<ID3D11Device> device;
-    ComPtr<ID3D11DeviceContext> context;
-    ComPtr<IDXGISwapChain1> swapChain;
-    ComPtr<ID3D11RenderTargetView> renderTarget;
-};
-
-Graphics g_gfx;
-App* g_app = nullptr;
-bool g_minimized = false;
-const float kClearColor[4] = {11.0f / 255.0f, 11.0f / 255.0f, 13.0f / 255.0f, 1.0f};
-// Selbsttest: je Bild eine simulierte Eingabe, nach der Win32-Eingabe eingespeist.
-std::vector<std::function<void(ImGuiIO&)>> g_pendingInput;
 
 Options ParseOptions() {
     Options options;
@@ -109,10 +93,14 @@ Options ParseOptions() {
             options.installCamera = true;
         } else if (arg == L"--uninstall-camera") {
             options.uninstallCamera = true;
+        } else if (arg == L"--cleanup") {
+            options.cleanup = true;
         } else if (arg == L"--vcam") {
             options.vcam = true;
         } else if (arg == L"--vcam-feed") {
             options.vcamFeed = true;
+        } else if (arg == L"--update-feed") {
+            options.updateFeed = next();
         } else if (arg == L"--selftest") {
             options.selftest = true;
         } else if (arg == L"--frames") {
@@ -143,187 +131,41 @@ Options ParseOptions() {
     return options;
 }
 
-bool CreateDevice() {
-    const D3D_FEATURE_LEVEL levels[] = {D3D_FEATURE_LEVEL_11_1, D3D_FEATURE_LEVEL_11_0, D3D_FEATURE_LEVEL_10_1,
-                                        D3D_FEATURE_LEVEL_10_0};
-    D3D_FEATURE_LEVEL level{};
-    HRESULT hr = D3D11CreateDevice(nullptr, D3D_DRIVER_TYPE_HARDWARE, nullptr,
-                                   D3D11_CREATE_DEVICE_BGRA_SUPPORT | D3D11_CREATE_DEVICE_VIDEO_SUPPORT, levels,
-                                   ARRAYSIZE(levels), D3D11_SDK_VERSION, &g_gfx.device, &level, &g_gfx.context);
-    if (FAILED(hr)) {
-        LogLine("Grafikkarte nicht nutzbar (0x%08X), weiche auf WARP aus", static_cast<unsigned>(hr));
-        hr = D3D11CreateDevice(nullptr, D3D_DRIVER_TYPE_WARP, nullptr, D3D11_CREATE_DEVICE_BGRA_SUPPORT, levels,
-                               ARRAYSIZE(levels), D3D11_SDK_VERSION, &g_gfx.device, &level, &g_gfx.context);
-        if (FAILED(hr)) return false;
-    }
-    // Decoder (Empfangs-Thread) und Oberfläche teilen sich das Gerät.
-    ComPtr<ID3D11Multithread> multithread;
-    if (SUCCEEDED(g_gfx.device.As(&multithread))) multithread->SetMultithreadProtected(TRUE);
-
-    ComPtr<IDXGIDevice> dxgiDevice;
-    ComPtr<IDXGIAdapter> adapter;
-    DXGI_ADAPTER_DESC desc{};
-    if (SUCCEEDED(g_gfx.device.As(&dxgiDevice)) && SUCCEEDED(dxgiDevice->GetAdapter(&adapter)) &&
-        SUCCEEDED(adapter->GetDesc(&desc))) {
-        LogLine("Grafik: %s (Feature-Level 0x%X)", Utf8(desc.Description).c_str(), static_cast<unsigned>(level));
-    }
-    return true;
-}
-
-bool CreateRenderTarget() {
-    ComPtr<ID3D11Texture2D> backBuffer;
-    if (FAILED(g_gfx.swapChain->GetBuffer(0, IID_PPV_ARGS(&backBuffer)))) return false;
-    return SUCCEEDED(g_gfx.device->CreateRenderTargetView(backBuffer.Get(), nullptr, &g_gfx.renderTarget));
-}
-
-bool CreateSwapChain(HWND hwnd) {
-    ComPtr<IDXGIDevice> dxgiDevice;
-    ComPtr<IDXGIAdapter> adapter;
-    ComPtr<IDXGIFactory2> factory;
-    if (FAILED(g_gfx.device.As(&dxgiDevice)) || FAILED(dxgiDevice->GetAdapter(&adapter)) ||
-        FAILED(adapter->GetParent(IID_PPV_ARGS(&factory)))) {
-        return false;
-    }
-    DXGI_SWAP_CHAIN_DESC1 desc{};
-    desc.Format = DXGI_FORMAT_B8G8R8A8_UNORM;
-    desc.SampleDesc.Count = 1;
-    desc.BufferUsage = DXGI_USAGE_RENDER_TARGET_OUTPUT;
-    desc.BufferCount = 2;
-    desc.SwapEffect = DXGI_SWAP_EFFECT_FLIP_DISCARD;
-    desc.Scaling = DXGI_SCALING_NONE;
-    HRESULT hr = factory->CreateSwapChainForHwnd(g_gfx.device.Get(), hwnd, &desc, nullptr, nullptr, &g_gfx.swapChain);
-    if (FAILED(hr)) {
-        desc.Scaling = DXGI_SCALING_STRETCH;
-        hr = factory->CreateSwapChainForHwnd(g_gfx.device.Get(), hwnd, &desc, nullptr, nullptr, &g_gfx.swapChain);
-    }
-    if (FAILED(hr)) {
-        LogLine("Swapchain konnte nicht erstellt werden (0x%08X)", static_cast<unsigned>(hr));
-        return false;
-    }
-    factory->MakeWindowAssociation(hwnd, DXGI_MWA_NO_ALT_ENTER);
-    return CreateRenderTarget();
-}
-
-LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
-    if (ImGui_ImplWin32_WndProcHandler(hwnd, msg, wParam, lParam)) return TRUE;
-    switch (msg) {
-    case WM_SIZE:
-        g_minimized = wParam == SIZE_MINIMIZED;
-        if (g_gfx.swapChain && !g_minimized) {
-            g_gfx.renderTarget.Reset();
-            g_gfx.swapChain->ResizeBuffers(0, LOWORD(lParam), HIWORD(lParam), DXGI_FORMAT_UNKNOWN, 0);
-            CreateRenderTarget();
-        }
-        return 0;
-    case WM_ACTIVATE:
-        if (LOWORD(wParam) != WA_INACTIVE && g_app) g_app->OnActivated();
-        break;
-    case WM_GETMINMAXINFO: {
-        auto* info = reinterpret_cast<MINMAXINFO*>(lParam);
-        info->ptMinTrackSize.x = 900;
-        info->ptMinTrackSize.y = 560;
-        return 0;
-    }
-    case WM_DPICHANGED: {
-        const RECT* suggested = reinterpret_cast<const RECT*>(lParam);
-        SetWindowPos(hwnd, nullptr, suggested->left, suggested->top, suggested->right - suggested->left,
-                     suggested->bottom - suggested->top, SWP_NOZORDER | SWP_NOACTIVATE);
-        return 0;
-    }
-    case WM_SYSCOMMAND:
-        if ((wParam & 0xfff0) == SC_KEYMENU) return 0;  // Alt-Menü abschalten
-        break;
-    case WM_DESTROY:
-        PostQuitMessage(0);
-        return 0;
-    }
-    return DefWindowProcW(hwnd, msg, wParam, lParam);
-}
-
-void SetupImGui(HWND hwnd, float scale) {
-    IMGUI_CHECKVERSION();
-    ImGui::CreateContext();
-    ImGui::GetIO().IniFilename = nullptr;
-    ImGui::StyleColorsDark();
-    ImGuiStyle& style = ImGui::GetStyle();
-    style.WindowPadding = ImVec2(0.0f, 0.0f);
-    style.WindowBorderSize = 0.0f;
-    style.ChildBorderSize = 0.0f;
-
-    // Alles Sichtbare zeichnet Theme selbst; ImGui liefert Fenster, Eingabe und Schrift.
-    Theme::SetScale(scale);
-    Theme::LoadFonts();
-    ImGui_ImplWin32_Init(hwnd);
-    ImGui_ImplDX11_Init(g_gfx.device.Get(), g_gfx.context.Get());
-}
-
-// Dunkle Titelleiste in der Farbe des Hintergrunds (Windows 11; ältere Versionen ignorieren das).
-void StyleTitleBar(HWND hwnd) {
-    const BOOL dark = TRUE;
-    DwmSetWindowAttribute(hwnd, 20 /* DWMWA_USE_IMMERSIVE_DARK_MODE */, &dark, sizeof(dark));
-    const COLORREF caption = RGB(22, 22, 25);
-    const COLORREF text = RGB(244, 244, 246);
-    DwmSetWindowAttribute(hwnd, 35 /* DWMWA_CAPTION_COLOR */, &caption, sizeof(caption));
-    DwmSetWindowAttribute(hwnd, 36 /* DWMWA_TEXT_COLOR */, &text, sizeof(text));
-}
-
-void RenderFrame(App& app) {
-    ImGui_ImplDX11_NewFrame();
-    ImGui_ImplWin32_NewFrame();
-    if (!g_pendingInput.empty()) {
-        g_pendingInput.front()(ImGui::GetIO());
-        g_pendingInput.erase(g_pendingInput.begin());
-    }
-    ImGui::NewFrame();
+void Frame(UiHost& host, App& app, bool present) {
+    app.UpdateVideo();
+    host.BeginFrame();
     app.Draw();
-    ImGui::Render();
-    g_gfx.context->OMSetRenderTargets(1, g_gfx.renderTarget.GetAddressOf(), nullptr);
-    g_gfx.context->ClearRenderTargetView(g_gfx.renderTarget.Get(), kClearColor);
-    ImGui_ImplDX11_RenderDrawData(ImGui::GetDrawData());
+    host.EndFrame(present);
 }
 
 // Normale Schleife. Gezeichnet wird nur bei neuen Bildern, Eingaben oder alle 250 ms für den
 // Status. Ist das Fenster minimiert, wird gar nicht gezeichnet.
-int RunLoop(App& app, HANDLE frameEvent) {
+int RunLoop(UiHost& host, App& app, HANDLE frameEvent) {
     int extraFrames = 2;
-    bool running = true;
-    while (running) {
-        DWORD timeout = extraFrames > 0 || app.Animating() ? 0 : 250;
+    for (;;) {
+        const DWORD timeout = extraFrames > 0 || app.Animating() ? 0 : 250;
         MsgWaitForMultipleObjectsEx(1, &frameEvent, timeout, QS_ALLINPUT, MWMO_INPUTAVAILABLE);
-        MSG msg;
-        while (PeekMessageW(&msg, nullptr, 0, 0, PM_REMOVE)) {
-            if (msg.message == WM_QUIT) running = false;
-            TranslateMessage(&msg);
-            DispatchMessageW(&msg);
-            extraFrames = 2;  // ImGui braucht nach Eingaben noch ein, zwei Bilder
-        }
-        if (!running) break;
-        if (g_minimized) {
+        bool hadInput = false;
+        if (!host.ProcessMessages(&hadInput)) break;
+        if (hadInput) extraFrames = 2;  // ImGui braucht nach Eingaben noch ein, zwei Bilder
+        if (host.Minimized()) {
             extraFrames = 0;
             continue;
         }
-        app.UpdateVideo();
-        RenderFrame(app);
-        g_gfx.swapChain->Present(1, 0);
+        Frame(host, app, true);
         if (extraFrames > 0) --extraFrames;
     }
     return 0;
 }
 
-int RunSelftest(App& app, StreamClient& client, HANDLE frameEvent, const Options& options) {
+int RunSelftest(UiHost& host, App& app, StreamClient& client, HANDLE frameEvent, const Options& options) {
     using Clock = std::chrono::steady_clock;
     const auto deadline = Clock::now() + std::chrono::milliseconds(static_cast<int>(options.timeout * 1000.0));
     bool success = options.frames <= 0;  // ohne Bildziel: nur die Zeit ablaufen lassen
     while (Clock::now() < deadline) {
         WaitForSingleObject(frameEvent, 100);
-        MSG msg;
-        while (PeekMessageW(&msg, nullptr, 0, 0, PM_REMOVE)) {
-            TranslateMessage(&msg);
-            DispatchMessageW(&msg);
-        }
-        app.UpdateVideo();
-        RenderFrame(app);
-        g_gfx.swapChain->Present(0, 0);
+        host.ProcessMessages();
+        Frame(host, app, true);
         if (options.frames > 0 && static_cast<int>(client.Status().framesDecoded) >= options.frames &&
             app.Video().HasFrame()) {
             success = true;
@@ -333,45 +175,38 @@ int RunSelftest(App& app, StreamClient& client, HANDLE frameEvent, const Options
     auto pump = [&](int frames) {
         for (int i = 0; i < frames; ++i) {
             Sleep(16);
-            MSG msg;
-            while (PeekMessageW(&msg, nullptr, 0, 0, PM_REMOVE)) {
-                TranslateMessage(&msg);
-                DispatchMessageW(&msg);
-            }
-            app.UpdateVideo();
-            RenderFrame(app);
-            g_gfx.swapChain->Present(0, 0);
+            host.ProcessMessages();
+            Frame(host, app, true);
         }
     };
     // Simulierte Klicks und Mausrad, jeweils mit Zeit für die Antwort des iPhones.
     for (const Options::InputAction& action : options.actions) {
         const ImVec2 pos(action.x, action.y);
-        g_pendingInput.push_back([pos](ImGuiIO& io) { io.AddMousePosEvent(pos.x, pos.y); });
+        host.pendingInput.push_back([pos](ImGuiIO& io) { io.AddMousePosEvent(pos.x, pos.y); });
         if (action.wheel) {
             const float amount = action.amount;
-            g_pendingInput.push_back([amount](ImGuiIO& io) { io.AddMouseWheelEvent(0.0f, amount); });
+            host.pendingInput.push_back([amount](ImGuiIO& io) { io.AddMouseWheelEvent(0.0f, amount); });
         } else {
-            g_pendingInput.push_back([](ImGuiIO& io) { io.AddMouseButtonEvent(0, true); });
-            g_pendingInput.push_back([](ImGuiIO& io) { io.AddMouseButtonEvent(0, false); });
+            host.pendingInput.push_back([](ImGuiIO& io) { io.AddMouseButtonEvent(0, true); });
+            host.pendingInput.push_back([](ImGuiIO& io) { io.AddMouseButtonEvent(0, false); });
         }
         pump(4);
         LogLine("Selbsttest: %s bei %.0f,%.0f", action.wheel ? "Mausrad" : "Klick", action.x, action.y);
         pump(36);
     }
     if (!options.actions.empty()) {
-        g_pendingInput.push_back([](ImGuiIO& io) { io.AddMousePosEvent(-FLT_MAX, -FLT_MAX); });
+        host.pendingInput.push_back([](ImGuiIO& io) { io.AddMousePosEvent(-FLT_MAX, -FLT_MAX); });
     }
     pump(40);  // Animationen auslaufen lassen (Seite einblenden, Hintergrund)
-    app.UpdateVideo();
-    RenderFrame(app);
+    Frame(host, app, false);
     if (!options.screenshotPath.empty()) {
         ComPtr<ID3D11Texture2D> backBuffer;
-        if (SUCCEEDED(g_gfx.swapChain->GetBuffer(0, IID_PPV_ARGS(&backBuffer)))) {
-            SaveTexturePng(g_gfx.device.Get(), g_gfx.context.Get(), backBuffer.Get(), options.screenshotPath);
+        if (SUCCEEDED(host.SwapChain()->GetBuffer(0, IID_PPV_ARGS(&backBuffer)))) {
+            SaveTexturePng(host.Device(), host.Context(), backBuffer.Get(), options.screenshotPath);
         }
     }
     if (!options.snapshotPath.empty() && app.Video().HasFrame()) {
-        SaveTexturePng(g_gfx.device.Get(), g_gfx.context.Get(), app.Video().OutputTexture(), options.snapshotPath);
+        SaveTexturePng(host.Device(), host.Context(), app.Video().OutputTexture(), options.snapshotPath);
     }
 
     const StreamStatus status = client.Status();
@@ -387,10 +222,10 @@ int RunSelftest(App& app, StreamClient& client, HANDLE frameEvent, const Options
 int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand) {
     const Options options = ParseOptions();
     std::wstring logPath = options.logPath.empty() ? DefaultLogPath() : options.logPath;
-    if (options.logPath.empty() && (options.installCamera || options.uninstallCamera)) {
-        // Eigene Datei: Das laufende KrakznCam hält sein Protokoll offen.
+    if (options.logPath.empty() && (options.installCamera || options.uninstallCamera || options.cleanup)) {
+        // Eigene Datei: Ein laufendes KrakznCam hält sein Protokoll offen.
         const size_t slash = logPath.find_last_of(L'\\');
-        logPath = logPath.substr(0, slash + 1) + L"kamera-einrichtung.log";
+        logPath = logPath.substr(0, slash + 1) + L"einrichtung.log";
     }
     LogInit(logPath);
     LogLine("KrakznCam %s startet", KRAKZNCAM_VERSION);
@@ -406,6 +241,15 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand) {
         CoUninitialize();
         return result;
     }
+    // Deinstallation: Sideloadlys Autostart wiederherstellen, falls KrakznCam ihn übernommen hatte.
+    if (options.cleanup) {
+        AutoRenew renew(true);
+        if (renew.Enabled()) renew.SetEnabled(false);
+        LogLine("Aufgeräumt für die Deinstallation");
+        MFShutdown();
+        CoUninitialize();
+        return 0;
+    }
 
     if (options.check) {
         const SetupReport report = RunSetupCheck();
@@ -419,74 +263,52 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand) {
         return 0;
     }
 
-    ImGui_ImplWin32_EnableDpiAwareness();
-    if (!CreateDevice()) {
-        MessageBoxW(nullptr, L"Die Grafik konnte nicht gestartet werden.", L"KrakznCam", MB_ICONERROR);
-        return 1;
-    }
-
-    WNDCLASSEXW windowClass{};
-    windowClass.cbSize = sizeof(windowClass);
-    windowClass.style = CS_CLASSDC;
-    windowClass.lpfnWndProc = WndProc;
-    windowClass.hInstance = instance;
-    windowClass.hCursor = LoadCursorW(nullptr, IDC_ARROW);
-    windowClass.hIcon = LoadIconW(instance, MAKEINTRESOURCEW(1));
-    windowClass.hIconSm = static_cast<HICON>(LoadImageW(instance, MAKEINTRESOURCEW(1), IMAGE_ICON,
-                                                        GetSystemMetrics(SM_CXSMICON),
-                                                        GetSystemMetrics(SM_CYSMICON), 0));
-    windowClass.hbrBackground = CreateSolidBrush(RGB(11, 11, 13));  // kein weißes Aufblitzen beim Vergrößern
-    windowClass.lpszClassName = L"KrakznCamWindow";
-    RegisterClassExW(&windowClass);
-
-    float scale = options.selftest
-                      ? 1.0f
-                      : ImGui_ImplWin32_GetDpiScaleForMonitor(MonitorFromPoint(POINT{0, 0}, MONITOR_DEFAULTTOPRIMARY));
-    const int width = options.selftest ? options.windowWidth : static_cast<int>(1200 * scale);
-    const int height = options.selftest ? options.windowHeight : static_cast<int>(740 * scale);
-    HWND hwnd = CreateWindowExW(0, windowClass.lpszClassName, L"KrakznCam", WS_OVERLAPPEDWINDOW, CW_USEDEFAULT,
-                                CW_USEDEFAULT, width, height, nullptr, nullptr, instance, nullptr);
-    if (!hwnd || !CreateSwapChain(hwnd)) {
-        MessageBoxW(nullptr, L"Das Fenster konnte nicht erstellt werden.", L"KrakznCam", MB_ICONERROR);
-        return 1;
-    }
-    StyleTitleBar(hwnd);
-    SetupImGui(hwnd, scale);
-
     int exitCode = 0;
     {
-        FrameStore store(g_gfx.device.Get());
+        UiHost host;
+        UiHost::Options window;
+        window.instance = instance;
+        window.videoSupport = true;
+        if (options.selftest) {
+            window.exactPixelSize = true;
+            window.width = options.windowWidth;
+            window.height = options.windowHeight;
+        }
+        if (!host.Create(window)) {
+            MFShutdown();
+            CoUninitialize();
+            return 1;
+        }
+
+        FrameStore store(host.Device());
         HANDLE frameEvent = CreateEventW(nullptr, FALSE, FALSE, nullptr);
         // Die Kamera vor dem Empfang anlegen und nach ihm abbauen: Der Empfang meldet ihr neue Bilder.
-        VirtualCamera camera(g_gfx.device.Get(), store);
-        StreamClient client(g_gfx.device.Get(), store, frameEvent);
+        VirtualCamera camera(host.Device(), store);
+        StreamClient client(host.Device(), store, frameEvent);
         client.SetExtraFrameEvent(camera.FrameEvent());
         // Im Selbsttest wird die Kamera nur auf Wunsch angemeldet (--vcam) oder nur beliefert (--vcam-feed).
         if (!options.selftest || options.vcam) camera.Start(true);
         else if (options.vcamFeed) camera.Start(false);
         client.Start(options.directHost, options.directPort);
-        App app(g_gfx.device.Get(), client, store, camera, options.page, scale, options.selftest);
-        g_app = &app;
+        // Im Selbsttest nur mit ausdrücklicher Test-Adresse nach Updates suchen.
+        Updater updater(KRAKZNCAM_VERSION, options.updateFeed.empty() ? Updater::kDefaultFeed : options.updateFeed,
+                        !options.selftest || !options.updateFeed.empty());
+        App app(host, client, store, camera, updater, options.page, host.DpiScale(), options.selftest);
+        host.onActivated = [&app] { app.OnActivated(); };
 
         if (options.selftest) {
-            exitCode = RunSelftest(app, client, frameEvent, options);
+            exitCode = RunSelftest(host, app, client, frameEvent, options);
         } else {
-            ShowWindow(hwnd, showCommand);
-            UpdateWindow(hwnd);
-            exitCode = RunLoop(app, frameEvent);
+            host.Show(showCommand);
+            exitCode = RunLoop(host, app, frameEvent);
         }
 
-        g_app = nullptr;
+        host.onActivated = nullptr;
         client.Stop();
         camera.Stop();
         CloseHandle(frameEvent);
     }
 
-    ImGui_ImplDX11_Shutdown();
-    ImGui_ImplWin32_Shutdown();
-    ImGui::DestroyContext();
-    if (IsWindow(hwnd)) DestroyWindow(hwnd);
-    UnregisterClassW(windowClass.lpszClassName, instance);
     MFShutdown();
     CoUninitialize();
     LogLine("KrakznCam beendet (Code %d)", exitCode);

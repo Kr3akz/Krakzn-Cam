@@ -261,16 +261,18 @@ float NoteRow(ImDrawList* dl, ImVec2 pos, float width, std::string_view text) {
 
 }  // namespace
 
-App::App(ID3D11Device* device, StreamClient& client, FrameStore& store, VirtualCamera& camera, Page initialPage,
-         float dpiScale, bool selftest)
-    : m_client(client),
+App::App(UiHost& host, StreamClient& client, FrameStore& store, VirtualCamera& camera, Updater& updater,
+         Page initialPage, float dpiScale, bool selftest)
+    : m_host(host),
+      m_client(client),
       m_store(store),
       m_camera(camera),
+      m_updater(updater),
       m_renew(!selftest),
       m_page(initialPage),
       m_pageShown(Clock::now()),
       m_dpiScale(dpiScale) {
-    m_video.Init(device);
+    m_video.Init(host.Device());
     Recheck();
 }
 
@@ -386,19 +388,33 @@ void App::DrawHeader(const StreamStatus& status, ImVec2 size) {
     const float pad = PagePadding(size.x);
     const float centerY = Px(40.0f);
     const float tabHeight = Measure(GetFonts().regular, Px(18.0f), "Kamera").y + Px(12.0f);
+    // Die ganze Kopfzeile ist zugleich die Titelleiste des Fensters (zum Verschieben ziehen,
+    // Doppelklick maximiert); ausgenommen sind die Bedienelemente.
+    m_host.SetCaptionHeight(Px(78.0f));
 
-    float x = pad - Px(14.0f);
+    // Links: Logo und Name, daneben die Reiter.
+    float x = pad;
+    const float logoRadius = Px(12.0f);
+    Logo(dl, ImVec2(x + logoRadius, centerY), logoRadius);
+    x += logoRadius * 2.0f + Px(10.0f);
+    const float wordSize = Px(20.0f);
+    x += Wordmark(dl, ImVec2(x, centerY - Measure(GetFonts().light, wordSize, "K").y * 0.5f), wordSize) + Px(30.0f);
+
     float width = 0.0f;
-    if (Tab("##tab_camera", "Kamera", ImVec2(x, centerY - tabHeight * 0.5f), m_page == Page::Camera, false, width)) {
-        ShowPage(Page::Camera);
-    }
+    const ImVec2 cameraTab(x, centerY - tabHeight * 0.5f);
+    if (Tab("##tab_camera", "Kamera", cameraTab, m_page == Page::Camera, false, width)) ShowPage(Page::Camera);
+    m_host.AddCaptionHotRect(cameraTab, cameraTab + ImVec2(width, tabHeight));
     x += width + Px(4.0f);
-    if (Tab("##tab_setup", "Einrichtung", ImVec2(x, centerY - tabHeight * 0.5f), m_page == Page::Setup,
+    const ImVec2 setupTab(x, centerY - tabHeight * 0.5f);
+    if (Tab("##tab_setup", "Einrichtung", setupTab, m_page == Page::Setup,
             OpenSetupItems() > 0 || m_cameraStatus.state == VirtualCamera::State::NotInstalled, width)) {
         ShowPage(Page::Setup);
     }
+    m_host.AddCaptionHotRect(setupTab, setupTab + ImVec2(width, tabHeight));
 
-    // Rechts: Status und Uhr.
+    // Rechts: Fensterknöpfe, Uhr, Status und (wenn es eins gibt) das Update.
+    float right = size.x - Px(12.0f);
+    right -= m_host.DrawWindowButtons(right, centerY) + Px(22.0f);
     char clock[8];
     const time_t now = time(nullptr);
     tm local{};
@@ -406,13 +422,52 @@ void App::DrawHeader(const StreamStatus& status, ImVec2 size) {
     strftime(clock, sizeof(clock), "%H:%M", &local);
     const float clockSize = Px(24.0f);
     const ImVec2 clockText = Measure(GetFonts().light, clockSize, clock);
-    const float right = size.x - pad;
     Text(dl, GetFonts().light, clockSize, ImVec2(right - clockText.x, centerY - clockText.y * 0.5f), kText, clock);
+    right -= clockText.x + Px(20.0f);
 
     const StateText state = Describe(status);
     const float chipWidth = ChipWidth(state.chip, true);
-    Chip(dl, ImVec2(right - clockText.x - Px(20.0f) - chipWidth, centerY - ChipHeight() * 0.5f), state.chip,
-         state.tone, true);
+    Chip(dl, ImVec2(right - chipWidth, centerY - ChipHeight() * 0.5f), state.chip, state.tone, true);
+    right -= chipWidth + Px(12.0f);
+    DrawUpdateBadge(dl, right, centerY);
+}
+
+void App::DrawUpdateBadge(ImDrawList* dl, float right, float centerY) {
+    const Updater::Status update = m_updater.GetStatus();
+    using State = Updater::State;
+    if (update.state == State::Available) {
+        const std::string label = "Update " + update.version;
+        const float width = ButtonWidth(label, Icon::Download, ButtonSize::Small);
+        const ImVec2 pos(right - width, centerY - ButtonHeight(ButtonSize::Small) * 0.5f);
+        if (Button("##update", label, Icon::Download, pos, ButtonSize::Small, true)) m_updater.Download();
+        m_host.AddCaptionHotRect(pos, pos + ImVec2(width, ButtonHeight(ButtonSize::Small)));
+    } else if (update.state == State::Downloading || update.state == State::Ready) {
+        const std::string label = update.state == State::Ready
+                                      ? std::string("Update wird installiert …")
+                                      : "Update lädt … " + std::to_string(static_cast<int>(update.progress * 100.0f)) + " %";
+        const float width = ChipWidth(label, false);
+        const ImVec2 pos(right - width, centerY - ChipHeight() * 0.5f);
+        Chip(dl, pos, label, Tone::Neutral);
+        // Dünner Fortschrittsbalken unter dem Chip.
+        const float inset = Px(12.0f);
+        Meter(dl, ImVec2(pos.x + inset, pos.y + ChipHeight() + Px(4.0f)),
+              ImVec2(pos.x + width - inset, pos.y + ChipHeight() + Px(6.0f)), update.progress);
+        // Fertig geladen: Setup starten und KrakznCam schließen, das Setup startet es danach neu.
+        if (update.state == State::Ready && !m_updateLaunched) {
+            m_updateLaunched = true;
+            if (m_updater.LaunchInstaller()) PostMessageW(m_host.Window(), WM_CLOSE, 0, 0);
+        }
+    } else if (update.state == State::Failed && !update.version.empty()) {
+        // Nur ein fehlgeschlagener Download wird gezeigt; eine fehlgeschlagene Prüfung wiederholt sich von selbst.
+        const char* label = "Update erneut versuchen";
+        const float width = ButtonWidth(label, Icon::Refresh, ButtonSize::Small);
+        const ImVec2 pos(right - width, centerY - ButtonHeight(ButtonSize::Small) * 0.5f);
+        if (Button("##update_retry", label, Icon::Refresh, pos, ButtonSize::Small)) {
+            m_updateLaunched = false;
+            m_updater.Download();
+        }
+        m_host.AddCaptionHotRect(pos, pos + ImVec2(width, ButtonHeight(ButtonSize::Small)));
+    }
 }
 
 void App::DrawCameraPage(const StreamStatus& status, ImVec2 min, ImVec2 max) {

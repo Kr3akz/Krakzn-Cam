@@ -106,7 +106,14 @@ enum class ButtonSize { Normal, Small };
 float ButtonWidth(std::string_view label, char32_t icon, ButtonSize size);
 float ButtonHeight(ButtonSize size);
 // Pillen-Knopf: halbtransparent, beim Darüberfahren weiß mit dunkler Schrift.
-bool Button(const char* id, std::string_view label, char32_t icon, ImVec2 pos, ButtonSize size = ButtonSize::Normal);
+// accent: blau hinterlegt für die eine wichtigste Aktion (z. B. „Installieren“, „Update“).
+bool Button(const char* id, std::string_view label, char32_t icon, ImVec2 pos, ButtonSize size = ButtonSize::Normal,
+            bool accent = false);
+
+// KrakznCam-Logo: Objektiv mit weißem Rahmen, dunklem Glas und blauem Ring.
+void Logo(ImDrawList* dl, ImVec2 center, float radius);
+// Schriftzug „KrakznCam“ („Cam“ grau). Gibt die Breite zurück.
+float Wordmark(ImDrawList* dl, ImVec2 pos, float size);
 
 // Reiter in der Kopfzeile. Gibt true zurück, wenn er angeklickt wurde; width = belegte Breite.
 bool Tab(const char* id, std::string_view label, ImVec2 pos, bool active, bool badge, float& width);
