@@ -15,7 +15,7 @@ bool VideoView::Init(ID3D11Device* device) {
     return true;
 }
 
-bool VideoView::Configure(ID3D11Texture2D* input, const FrameInfo& info) {
+VideoView::ConfigureResult VideoView::Configure(ID3D11Texture2D* input, const FrameInfo& info) {
     m_inputView.Reset();
     m_outputView.Reset();
     m_processor.Reset();
@@ -37,8 +37,13 @@ bool VideoView::Configure(ID3D11Texture2D* input, const FrameInfo& info) {
     if (SUCCEEDED(hr)) hr = m_videoDevice->CreateVideoProcessor(m_enumerator.Get(), 0, &m_processor);
     if (FAILED(hr)) {
         LogLine("Video-Prozessor konnte nicht erstellt werden (0x%08X)", static_cast<unsigned>(hr));
-        return false;
+        return ConfigureResult::Failed;
     }
+    UINT nv12Support = 0;
+    UINT bgraSupport = 0;
+    m_enumerator->CheckVideoProcessorFormat(DXGI_FORMAT_NV12, &nv12Support);
+    m_enumerator->CheckVideoProcessorFormat(DXGI_FORMAT_B8G8R8A8_UNORM, &bgraSupport);
+    LogLine("Video-Prozessor: NV12-Unterstützung 0x%X, BGRA-Unterstützung 0x%X", nv12Support, bgraSupport);
 
     D3D11_TEXTURE2D_DESC desc{};
     desc.Width = info.displayWidth;
@@ -53,20 +58,25 @@ bool VideoView::Configure(ID3D11Texture2D* input, const FrameInfo& info) {
     if (SUCCEEDED(hr)) hr = m_device->CreateShaderResourceView(m_output.Get(), nullptr, &m_srv);
     if (FAILED(hr)) {
         LogLine("Vorschau-Textur konnte nicht erstellt werden (0x%08X)", static_cast<unsigned>(hr));
-        return false;
+        return ConfigureResult::Failed;
     }
 
     D3D11_VIDEO_PROCESSOR_OUTPUT_VIEW_DESC outputDesc{};
     outputDesc.ViewDimension = D3D11_VPOV_DIMENSION_TEXTURE2D;
     hr = m_videoDevice->CreateVideoProcessorOutputView(m_output.Get(), m_enumerator.Get(), &outputDesc, &m_outputView);
+    if (FAILED(hr)) {
+        LogLine("Ausgabe-Ansicht des Video-Prozessors fehlgeschlagen (0x%08X)", static_cast<unsigned>(hr));
+        return ConfigureResult::Failed;
+    }
     D3D11_VIDEO_PROCESSOR_INPUT_VIEW_DESC inputDesc{};
     inputDesc.ViewDimension = D3D11_VPIV_DIMENSION_TEXTURE2D;
-    if (SUCCEEDED(hr)) {
-        hr = m_videoDevice->CreateVideoProcessorInputView(input, m_enumerator.Get(), &inputDesc, &m_inputView);
-    }
+    hr = m_videoDevice->CreateVideoProcessorInputView(input, m_enumerator.Get(), &inputDesc, &m_inputView);
     if (FAILED(hr)) {
-        LogLine("Video-Prozessor-Ansichten konnten nicht erstellt werden (0x%08X)", static_cast<unsigned>(hr));
-        return false;
+        D3D11_TEXTURE2D_DESC inputTexture{};
+        input->GetDesc(&inputTexture);
+        LogLine("Eingabe-Ansicht abgelehnt (0x%08X) für Textur %ux%u, Bind 0x%X", static_cast<unsigned>(hr),
+                inputTexture.Width, inputTexture.Height, inputTexture.BindFlags);
+        return ConfigureResult::InputRejected;
     }
 
     RECT visible{0, 0, static_cast<LONG>(info.displayWidth), static_cast<LONG>(info.displayHeight)};
@@ -92,16 +102,22 @@ bool VideoView::Configure(ID3D11Texture2D* input, const FrameInfo& info) {
     m_width = info.displayWidth;
     m_height = info.displayHeight;
     LogLine("Vorschau eingerichtet: %ux%u", m_width, m_height);
-    return true;
+    return ConfigureResult::Ok;
 }
 
 bool VideoView::Update(FrameStore& store) {
     if (!m_videoContext || m_failed) return false;
     bool converted = false;
+    bool inputRejected = false;
     store.WithLatest(m_lastCounter, [&](ID3D11Texture2D* input, const FrameInfo& info) {
         if (input != m_configuredInput || info.codedWidth != m_codedWidth || info.codedHeight != m_codedHeight ||
             info.displayWidth != m_width || info.displayHeight != m_height) {
-            if (!Configure(input, info)) {
+            const ConfigureResult result = Configure(input, info);
+            if (result == ConfigureResult::InputRejected) {
+                inputRejected = true;
+                return;
+            }
+            if (result != ConfigureResult::Ok) {
                 m_failed = true;
                 return;
             }
@@ -117,5 +133,10 @@ bool VideoView::Update(FrameStore& store) {
         converted = true;
         m_hasFrame = true;
     });
+    // Außerhalb der Sperre: Bildablage mit anderer Textur-Variante neu anlegen lassen.
+    if (inputRejected && !store.TryNextTextureVariant()) {
+        LogLine("Keine Textur-Variante passt zum Video-Prozessor dieser Grafikkarte");
+        m_failed = true;
+    }
     return converted;
 }

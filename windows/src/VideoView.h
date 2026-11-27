@@ -19,7 +19,8 @@ public:
     UINT Height() const { return m_height; }
 
 private:
-    bool Configure(ID3D11Texture2D* input, const FrameInfo& info);
+    enum class ConfigureResult { Ok, InputRejected, Failed };
+    ConfigureResult Configure(ID3D11Texture2D* input, const FrameInfo& info);
 
     Microsoft::WRL::ComPtr<ID3D11Device> m_device;
     Microsoft::WRL::ComPtr<ID3D11VideoDevice> m_videoDevice;

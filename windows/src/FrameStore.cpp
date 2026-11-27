@@ -4,6 +4,25 @@
 
 #include <cstring>
 
+namespace {
+
+// Nicht jeder Grafiktreiber akzeptiert jede NV12-Textur als Eingang für den Video-Prozessor.
+// Zuerst wie eine Decoder-Ausgabe (funktioniert fast überall), danach die Alternativen.
+struct BindVariant {
+    UINT flags;
+    const char* name;
+};
+const BindVariant kBindVariants[] = {
+    {D3D11_BIND_DECODER, "DECODER"},
+    {D3D11_BIND_SHADER_RESOURCE, "SHADER_RESOURCE"},
+    {D3D11_BIND_RENDER_TARGET | D3D11_BIND_SHADER_RESOURCE, "RENDER_TARGET|SHADER_RESOURCE"},
+    {D3D11_BIND_RENDER_TARGET, "RENDER_TARGET"},
+    {0, "ohne"},
+};
+constexpr size_t kBindVariantCount = sizeof(kBindVariants) / sizeof(kBindVariants[0]);
+
+}  // namespace
+
 FrameStore::FrameStore(ID3D11Device* device) : m_device(device) {
     m_device->GetImmediateContext(&m_context);
 }
@@ -24,15 +43,26 @@ bool FrameStore::EnsureTexture(UINT width, UINT height) {
     desc.Format = DXGI_FORMAT_NV12;
     desc.SampleDesc.Count = 1;
     desc.Usage = D3D11_USAGE_DEFAULT;
-    UINT support = 0;
-    m_device->CheckFormatSupport(DXGI_FORMAT_NV12, &support);
-    desc.BindFlags = (support & D3D11_FORMAT_SUPPORT_SHADER_SAMPLE) ? D3D11_BIND_SHADER_RESOURCE : 0;
-    HRESULT hr = m_device->CreateTexture2D(&desc, nullptr, &m_texture);
-    if (FAILED(hr)) {
-        LogLine("NV12-Textur %ux%u konnte nicht angelegt werden (0x%08X)", width, height, static_cast<unsigned>(hr));
-        return false;
+    while (m_variant < kBindVariantCount) {
+        desc.BindFlags = kBindVariants[m_variant].flags;
+        HRESULT hr = m_device->CreateTexture2D(&desc, nullptr, &m_texture);
+        if (SUCCEEDED(hr)) {
+            LogLine("NV12-Textur %ux%u angelegt (Bind: %s)", width, height, kBindVariants[m_variant].name);
+            return true;
+        }
+        LogLine("NV12-Textur mit Bind %s nicht möglich (0x%08X)", kBindVariants[m_variant].name,
+                static_cast<unsigned>(hr));
+        ++m_variant;
     }
-    return true;
+    return false;
+}
+
+bool FrameStore::TryNextTextureVariant() {
+    std::lock_guard lock(m_mutex);
+    ++m_variant;
+    m_texture.Reset();
+    m_staging.Reset();
+    return m_variant < kBindVariantCount;
 }
 
 void FrameStore::StoreFromTexture(ID3D11Texture2D* source, UINT subresource, UINT displayWidth, UINT displayHeight,

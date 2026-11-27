@@ -96,7 +96,7 @@ void StreamClient::Run() {
 SOCKET StreamClient::OpenConnection() {
     if (!m_directHost.empty()) {
         SOCKET s = TcpConnect(m_directHost.c_str(), m_directPort, 1000);
-        if (s == INVALID_SOCKET) SetState(StreamStatus::State::AppNotReachable, "Testquelle nicht erreichbar");
+        if (s == INVALID_SOCKET) SetState(StreamStatus::State::AppNotReachable);
         return s;
     }
 

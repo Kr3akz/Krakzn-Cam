@@ -25,6 +25,10 @@ public:
     void StoreFromMemory(const uint8_t* nv12, UINT stride, UINT codedWidth, UINT codedHeight, UINT displayWidth,
                          UINT displayHeight, int64_t ptsMicros);
 
+    // Die Vorschau konnte die Textur nicht verwenden: beim nächsten Bild mit anderen
+    // Bind-Flags neu anlegen. false, wenn alle Varianten durchprobiert sind.
+    bool TryNextTextureVariant();
+
     // Ruft fn(texture, info) auf, falls seit lastCounter ein neues Bild da ist.
     template <class Fn>
     bool WithLatest(uint64_t& lastCounter, Fn&& fn) {
@@ -44,4 +48,5 @@ private:
     Microsoft::WRL::ComPtr<ID3D11Texture2D> m_staging;
     std::mutex m_mutex;
     FrameInfo m_info;
+    size_t m_variant = 0;
 };
