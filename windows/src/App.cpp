@@ -111,6 +111,30 @@ float WarnNote(ImDrawList* dl, ImVec2 pos, float width, std::string_view text) {
     return height;
 }
 
+// Neutraler Hinweis-Kasten mit Info-Symbol. Gibt die Höhe zurück.
+float InfoNote(ImDrawList* dl, ImVec2 pos, float width, std::string_view text) {
+    const ImVec2 padding(Px(14.0f), Px(11.0f));
+    const float size = Px(14.5f);
+    const float iconSize = Px(15.0f);
+    const float textX = pos.x + padding.x + iconSize + Px(10.0f);
+    const float textWidth = pos.x + width - padding.x - textX;
+    const float textHeight = Measure(GetFonts().regular, size, text, textWidth).y;
+    const float height = textHeight + padding.y * 2.0f;
+    dl->AddRectFilled(pos, ImVec2(pos.x + width, pos.y + height), A(White(0.07f)), Px(9.0f));
+    DrawIcon(dl, Icon::Info, ImVec2(pos.x + padding.x + iconSize * 0.5f, pos.y + padding.y + Px(9.5f)), iconSize, kText2);
+    Text(dl, GetFonts().regular, size, ImVec2(textX, pos.y + padding.y), kText2, text, textWidth);
+    return height;
+}
+
+std::string LongDate(int64_t unixSeconds) {
+    time_t value = static_cast<time_t>(unixSeconds);
+    tm local{};
+    localtime_s(&local, &value);
+    char buffer[16];
+    strftime(buffer, sizeof(buffer), "%d.%m.%Y", &local);
+    return buffer;
+}
+
 // Beschriftung in gesperrten Großbuchstaben (Bahnschrift).
 float Kicker(ImDrawList* dl, ImVec2 pos, std::string_view text, float size = 11.5f) {
     Spaced(dl, GetFonts().brand, Px(size), pos, kText3, text, 0.2f);
@@ -141,8 +165,14 @@ ItemLook LookFor(const SetupItem& item) {
 
 }  // namespace
 
-App::App(ID3D11Device* device, StreamClient& client, FrameStore& store, Page initialPage, float dpiScale)
-    : m_client(client), m_store(store), m_page(initialPage), m_pageShown(Clock::now()), m_dpiScale(dpiScale) {
+App::App(ID3D11Device* device, StreamClient& client, FrameStore& store, Page initialPage, float dpiScale,
+         bool selftest)
+    : m_client(client),
+      m_store(store),
+      m_renew(!selftest),
+      m_page(initialPage),
+      m_pageShown(Clock::now()),
+      m_dpiScale(dpiScale) {
     m_video.Init(device);
     Recheck();
 }
@@ -184,6 +214,8 @@ void App::Draw() {
     // Proportionen im Vollbild dieselben sind. Nie kleiner als 80 % der Bildschirm-Skalierung.
     SetScale(std::max(m_dpiScale * 0.8f, std::min(size.x / 1280.0f, size.y / 760.0f)));
     const StreamStatus status = m_client.Status();
+    // Das Ablaufdatum der Testquelle ist ausgedacht und wird nie übernommen.
+    m_renew.Update(status.direct ? 0 : status.signatureExpires, m_setup);
     const bool live = status.state == StreamStatus::State::Streaming && m_video.HasFrame();
 
     DrawBackground(ImGui::GetBackgroundDrawList(), size, live);
@@ -365,7 +397,18 @@ float App::DrawHero(ImDrawList* dl, ImVec2 pos, float width, const StreamStatus&
     if (status.signatureExpires > 0) {
         const int days = CalendarDaysUntil(status.signatureExpires);
         const bool expired = status.signatureExpires < static_cast<int64_t>(time(nullptr));
-        if (expired || days <= 2) {
+        const AutoRenew::State renew = m_renew.GetState();
+        if (renew == AutoRenew::State::Renewing) {
+            y += InfoNote(dl, ImVec2(pos.x, y), width,
+                          "Die Signatur läuft bald ab. Sideloadly erneuert sie gerade automatisch, die App auf dem "
+                          "iPhone startet dabei kurz neu.") +
+                 Px(16.0f);
+        } else if ((expired || days <= 2) && renew == AutoRenew::State::Waiting) {
+            y += InfoNote(dl, ImVec2(pos.x, y), width,
+                          "Die Signatur läuft am " + ShortDate(status.signatureExpires) +
+                              " ab. KrakznCam lässt sie rechtzeitig von Sideloadly erneuern.") +
+                 Px(16.0f);
+        } else if (expired || days <= 2) {
             std::string note;
             if (expired) note = "Die Signatur ist abgelaufen. Spiele die App mit Sideloadly neu auf.";
             else if (days == 0) note = "Die Signatur läuft heute ab. Erneuere sie jetzt mit Sideloadly.";
@@ -596,6 +639,42 @@ float App::DrawSetupList(ImDrawList* dl, ImVec2 pos, float width, float minHeigh
         } else if (item.status == SetupItem::Status::Ok) {
             Chip(dl, ImVec2(listRight - Px(12.0f) - trailing, rowCenter - ChipHeight() * 0.5f), "Bereit", Tone::Ok);
         }
+        y += height;
+    }
+
+    // Signatur automatisch erneuern (nur sinnvoll, wenn Sideloadly da ist).
+    if (!m_setup.sideloadlyExe.empty()) {
+        const char* title = "Signatur automatisch erneuern";
+        std::string detail;
+        switch (m_renew.GetState()) {
+        case AutoRenew::State::Renewing:
+            detail = "Läuft bald ab: Sideloadly erneuert sie gerade. Die App auf dem iPhone startet dabei kurz neu.";
+            break;
+        case AutoRenew::State::Off:
+            detail = "Aus. Der Sideloadly-Dienst startet dann mit Windows und läuft dauerhaft im Hintergrund.";
+            break;
+        default:
+            detail = "KrakznCam startet Sideloadly nur, wenn die Signatur in weniger als 2 Tagen abläuft.";
+            if (m_renew.KnownExpiry() > 0) detail += " Gültig bis " + LongDate(m_renew.KnownExpiry()) + ".";
+            break;
+        }
+        const float textWidth = listRight - Px(12.0f) - textX - SwitchWidth() - Px(16.0f);
+        const float content =
+            Measure(fonts.light, titleSize, title).y + Px(3.0f) + Measure(fonts.regular, descSize, detail, textWidth).y;
+        const float height = std::max(iconBox, content) + Px(13.0f) * 2.0f;
+        if (!items.empty()) {
+            dl->AddRectFilled(ImVec2(listLeft + Px(12.0f), y), ImVec2(listRight - Px(12.0f), y + 1.0f),
+                              A(White(0.07f)));
+        }
+        const bool enabled = m_renew.Enabled();
+        const ImVec2 iconMin(listLeft + Px(12.0f), y + (height - iconBox) * 0.5f);
+        dl->AddRectFilled(iconMin, iconMin + ImVec2(iconBox, iconBox), A(IM_COL32(0, 0, 0, 90)), Px(7.0f));
+        DrawIcon(dl, Icon::Refresh, iconMin + ImVec2(iconBox, iconBox) * 0.5f, Px(19.0f), enabled ? kAccent : kText3);
+        float textY = y + (height - content) * 0.5f;
+        textY += Text(dl, fonts.light, titleSize, ImVec2(textX, textY), kText, title) + Px(3.0f);
+        Text(dl, fonts.regular, descSize, ImVec2(textX, textY), kText3, detail, textWidth);
+        bool value = enabled;
+        if (Switch("##autorenew", ImVec2(listRight - Px(12.0f), y + height * 0.5f), value)) m_renew.SetEnabled(value);
         y += height;
     }
 

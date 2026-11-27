@@ -377,7 +377,7 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand) {
         HANDLE frameEvent = CreateEventW(nullptr, FALSE, FALSE, nullptr);
         StreamClient client(g_gfx.device.Get(), store, frameEvent);
         client.Start(options.directHost, options.directPort);
-        App app(g_gfx.device.Get(), client, store, options.page, scale);
+        App app(g_gfx.device.Get(), client, store, options.page, scale, options.selftest);
         g_app = &app;
 
         if (options.selftest) {

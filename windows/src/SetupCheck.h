@@ -32,5 +32,7 @@ SetupReport RunSetupCheck();
 void OpenTarget(const std::wstring& target);
 // Öffnet den Explorer mit der Datei markiert.
 void RevealInExplorer(const std::wstring& path);
+// Läuft ein Prozess mit diesem Dateinamen (z. B. L"sideloadlydaemon.exe")?
+bool IsProcessRunning(const wchar_t* exeName);
 
 const char* SetupStatusName(SetupItem::Status status);

@@ -480,6 +480,30 @@ bool Tab(const char* id, std::string_view label, ImVec2 pos, bool active, bool b
     return clicked;
 }
 
+float SwitchWidth() {
+    return Px(44.0f);
+}
+
+bool Switch(const char* id, ImVec2 rightCenter, bool& value) {
+    const float width = SwitchWidth();
+    const float height = Px(26.0f);
+    const float knob = Px(20.0f);
+    const ImVec2 min(rightCenter.x - width, rightCenter.y - height * 0.5f);
+    ImGui::SetCursorScreenPos(min);
+    const bool clicked = ImGui::InvisibleButton(id, ImVec2(width, height));
+    if (ImGui::IsItemHovered()) ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
+    if (clicked) value = !value;
+    const float t = Animate(ImGui::GetItemID(), value ? 1.0f : 0.0f, 16.0f);
+
+    ImDrawList* dl = ImGui::GetWindowDrawList();
+    dl->AddRectFilled(min, min + ImVec2(width, height), A(Mix(White(0.2f), kAccent, t)), height * 0.5f);
+    const float inset = (height - knob) * 0.5f;
+    const ImVec2 center(min.x + inset + knob * 0.5f + t * (width - knob - inset * 2.0f), rightCenter.y);
+    dl->AddCircleFilled(center + ImVec2(0.0f, Px(1.0f)), knob * 0.5f, A(IM_COL32(0, 0, 0, 60)), 32);
+    dl->AddCircleFilled(center, knob * 0.5f, A(IM_COL32_WHITE), 32);
+    return clicked;
+}
+
 namespace {
 struct ToneColors {
     ImU32 background;

@@ -31,6 +31,7 @@ set_target_properties(imgui PROPERTIES COMPILE_WARNING_AS_ERROR OFF)
 
 # Gemeinsamer Kern: USB-Tunnel, Protokoll, Decoder.
 add_library(krakzncam_core STATIC
+    src/AutoRenew.cpp
     src/FrameStore.cpp
     src/H264Decoder.cpp
     src/Json.cpp

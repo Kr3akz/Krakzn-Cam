@@ -311,6 +311,10 @@ std::wstring FindAppPackage() {
 
 }  // namespace
 
+bool IsProcessRunning(const wchar_t* exeName) {
+    return !RunningProcessPath(exeName).empty();
+}
+
 void RevealInExplorer(const std::wstring& path) {
     const std::wstring arguments = L"/select,\"" + path + L"\"";
     ShellExecuteW(nullptr, L"open", L"explorer.exe", arguments.c_str(), nullptr, SW_SHOWNORMAL);
@@ -426,14 +430,7 @@ SetupReport RunSetupCheck() {
         item.title = "Sideloadly";
         if (!report.sideloadlyExe.empty()) {
             item.status = SetupItem::Status::Ok;
-            if (report.sideloadlyDaemonRunning) {
-                item.detail = "Erneuert die Signatur automatisch, solange sein Hintergrunddienst läuft (läuft gerade).";
-            } else if (report.sideloadlyDaemonAutostart) {
-                item.detail = "Erneuert die Signatur automatisch. Sein Hintergrunddienst startet mit Windows.";
-            } else {
-                item.detail = "Bringt die App aufs iPhone. Automatisches Erneuern ist aus, also alle 7 Tage neu "
-                              "aufspielen.";
-            }
+            item.detail = "Bringt die App aufs iPhone und erneuert ihre Signatur.";
             item.actionLabel = "Öffnen";
             item.actionTarget = report.sideloadlyExe;
         } else {

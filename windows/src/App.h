@@ -1,4 +1,5 @@
 #pragma once
+#include "AutoRenew.h"
 #include "FrameStore.h"
 #include "SetupCheck.h"
 #include "StreamClient.h"
@@ -15,7 +16,9 @@ public:
     enum class Page { Camera, Setup };
 
     // dpiScale: Skalierung des Bildschirms (1,0 = 100 %). Die Oberfläche wächst zusätzlich mit dem Fenster.
-    App(ID3D11Device* device, StreamClient& client, FrameStore& store, Page initialPage, float dpiScale);
+    // selftest: nichts an Windows oder Sideloadly verändern.
+    App(ID3D11Device* device, StreamClient& client, FrameStore& store, Page initialPage, float dpiScale,
+        bool selftest);
 
     // Fenster wurde aktiviert: Einrichtung neu prüfen (z. B. nach einer Installation).
     void OnActivated();
@@ -48,6 +51,7 @@ private:
     FrameStore& m_store;
     VideoView m_video;
     SetupReport m_setup;
+    AutoRenew m_renew;
     Page m_page;
     std::chrono::steady_clock::time_point m_lastCheck;
     std::chrono::steady_clock::time_point m_pageShown;

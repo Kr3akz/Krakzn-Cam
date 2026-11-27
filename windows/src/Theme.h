@@ -108,6 +108,10 @@ bool Button(const char* id, std::string_view label, char32_t icon, ImVec2 pos, B
 // Reiter in der Kopfzeile. Gibt true zurück, wenn er angeklickt wurde; width = belegte Breite.
 bool Tab(const char* id, std::string_view label, ImVec2 pos, bool active, bool badge, float& width);
 
+// Schalter wie in Eidolon: Spur grau bzw. blau, weißer Knopf. Gibt true zurück, wenn umgeschaltet.
+float SwitchWidth();
+bool Switch(const char* id, ImVec2 rightCenter, bool& value);
+
 enum class Tone { Neutral, Ok, Warn, Bad, Solid };
 float ChipWidth(std::string_view label, bool dot);
 // Kleine Pille mit Text; dot zeigt einen farbigen Punkt davor. Gibt die Breite zurück.
