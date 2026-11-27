@@ -3,6 +3,8 @@
 #include <windows.h>
 #include <shlobj.h>
 
+#include <share.h>
+
 #include <cstdarg>
 #include <cstdio>
 #include <mutex>
@@ -32,7 +34,8 @@ void LogInit(const std::wstring& path) {
         g_file = nullptr;
     }
     if (!path.empty()) {
-        _wfopen_s(&g_file, path.c_str(), L"wb");
+        // Lesen erlauben, während KrakznCam läuft (z. B. mit dem Editor). _wfopen_s sperrt die Datei ganz.
+        g_file = _wfsopen(path.c_str(), L"wb", _SH_DENYWR);
     }
 }
 
