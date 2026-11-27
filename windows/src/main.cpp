@@ -6,6 +6,7 @@
 //   krakzncam.exe --check --log datei.txt       nur Einrichtung prüfen und ins Protokoll schreiben
 //   krakzncam.exe --selftest --frames 60 --snapshot bild.png --screenshot ui.png --log datei.txt
 //                                              unsichtbar laufen, bis N Bilder dekodiert sind, dann speichern
+//                [--click x,y] [--wheel x,y,menge]   danach Mausklicks bzw. Mausrad simulieren (mehrfach möglich)
 
 #include "App.h"
 #include "FrameStore.h"
@@ -29,9 +30,12 @@
 #include <shellapi.h>
 #include <wrl/client.h>
 
+#include <cfloat>
 #include <chrono>
 #include <cstdlib>
+#include <functional>
 #include <string>
+#include <vector>
 
 extern IMGUI_IMPL_API LRESULT ImGui_ImplWin32_WndProcHandler(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam);
 
@@ -52,6 +56,14 @@ struct Options {
     App::Page page = App::Page::Camera;
     std::wstring snapshotPath;
     std::wstring screenshotPath;
+    // Selbsttest: simulierte Eingaben nach dem letzten Bild (Fensterkoordinaten).
+    struct InputAction {
+        bool wheel = false;
+        float x = 0.0f;
+        float y = 0.0f;
+        float amount = 0.0f;
+    };
+    std::vector<InputAction> actions;
 };
 
 struct Graphics {
@@ -65,6 +77,8 @@ Graphics g_gfx;
 App* g_app = nullptr;
 bool g_minimized = false;
 const float kClearColor[4] = {11.0f / 255.0f, 11.0f / 255.0f, 13.0f / 255.0f, 1.0f};
+// Selbsttest: je Bild eine simulierte Eingabe, nach der Win32-Eingabe eingespeist.
+std::vector<std::function<void(ImGuiIO&)>> g_pendingInput;
 
 Options ParseOptions() {
     Options options;
@@ -103,6 +117,11 @@ Options ParseOptions() {
             options.snapshotPath = next();
         } else if (arg == L"--screenshot") {
             options.screenshotPath = next();
+        } else if (arg == L"--click" || arg == L"--wheel") {
+            Options::InputAction action;
+            action.wheel = arg == L"--wheel";
+            swscanf_s(next().c_str(), L"%f,%f,%f", &action.x, &action.y, &action.amount);
+            options.actions.push_back(action);
         }
     }
     LocalFree(argv);
@@ -236,6 +255,10 @@ void StyleTitleBar(HWND hwnd) {
 void RenderFrame(App& app) {
     ImGui_ImplDX11_NewFrame();
     ImGui_ImplWin32_NewFrame();
+    if (!g_pendingInput.empty()) {
+        g_pendingInput.front()(ImGui::GetIO());
+        g_pendingInput.erase(g_pendingInput.begin());
+    }
     ImGui::NewFrame();
     app.Draw();
     ImGui::Render();
@@ -292,12 +315,38 @@ int RunSelftest(App& app, StreamClient& client, HANDLE frameEvent, const Options
             break;
         }
     }
-    for (int i = 0; i < 40; ++i) {  // Animationen auslaufen lassen (Seite einblenden, Hintergrund)
-        Sleep(16);
-        app.UpdateVideo();
-        RenderFrame(app);
-        g_gfx.swapChain->Present(0, 0);
+    auto pump = [&](int frames) {
+        for (int i = 0; i < frames; ++i) {
+            Sleep(16);
+            MSG msg;
+            while (PeekMessageW(&msg, nullptr, 0, 0, PM_REMOVE)) {
+                TranslateMessage(&msg);
+                DispatchMessageW(&msg);
+            }
+            app.UpdateVideo();
+            RenderFrame(app);
+            g_gfx.swapChain->Present(0, 0);
+        }
+    };
+    // Simulierte Klicks und Mausrad, jeweils mit Zeit für die Antwort des iPhones.
+    for (const Options::InputAction& action : options.actions) {
+        const ImVec2 pos(action.x, action.y);
+        g_pendingInput.push_back([pos](ImGuiIO& io) { io.AddMousePosEvent(pos.x, pos.y); });
+        if (action.wheel) {
+            const float amount = action.amount;
+            g_pendingInput.push_back([amount](ImGuiIO& io) { io.AddMouseWheelEvent(0.0f, amount); });
+        } else {
+            g_pendingInput.push_back([](ImGuiIO& io) { io.AddMouseButtonEvent(0, true); });
+            g_pendingInput.push_back([](ImGuiIO& io) { io.AddMouseButtonEvent(0, false); });
+        }
+        pump(4);
+        LogLine("Selbsttest: %s bei %.0f,%.0f", action.wheel ? "Mausrad" : "Klick", action.x, action.y);
+        pump(36);
     }
+    if (!options.actions.empty()) {
+        g_pendingInput.push_back([](ImGuiIO& io) { io.AddMousePosEvent(-FLT_MAX, -FLT_MAX); });
+    }
+    pump(40);  // Animationen auslaufen lassen (Seite einblenden, Hintergrund)
     app.UpdateVideo();
     RenderFrame(app);
     if (!options.screenshotPath.empty()) {

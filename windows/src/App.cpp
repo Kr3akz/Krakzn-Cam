@@ -225,9 +225,10 @@ struct SliderResult {
 SliderResult SliderRow(ImDrawList* dl, const char* id, ImVec2 pos, float width, std::string_view label,
                        const std::string& value, float& t, const SliderStyle& style = {}) {
     const Fonts& fonts = GetFonts();
-    Text(dl, fonts.regular, Px(14.0f), pos, kText2, label);
+    Text(dl, fonts.regular, Px(14.0f), pos, style.muted ? kText3 : kText2, label);
     const ImVec2 valueSize = Measure(fonts.semibold, Px(13.5f), value);
-    Text(dl, fonts.semibold, Px(13.5f), ImVec2(pos.x + width - valueSize.x, pos.y + Px(1.0f)), kText, value);
+    Text(dl, fonts.semibold, Px(13.5f), ImVec2(pos.x + width - valueSize.x, pos.y + Px(1.0f)),
+         style.muted ? kText2 : kText, value);
     SliderResult result;
     result.changed = Slider(id, ImVec2(pos.x, pos.y + Px(23.0f)), width, t, result.released, style);
     result.height = Px(23.0f) + SliderHeight();
@@ -901,8 +902,7 @@ void App::DrawSettings(ImVec2 min, ImVec2 max) {
         ImGui::PopID();
     };
 
-    // Regler in der Automatik: blasser, aber bedienbar. Wer zieht, schaltet auf manuell.
-    constexpr float kAutoAlpha = 0.5f;
+    // Regler in der Automatik sind grau, aber bedienbar: Wer zieht, schaltet auf manuell.
 
     if (CamHas("resolution")) {
         section("format", "FORMAT", nullptr, [&](float x, float y, float w) {
@@ -1006,13 +1006,13 @@ void App::DrawSettings(ImVec2 min, ImVec2 max) {
                     {
                         // Die Korrektur wirkt nur mit Automatik; Ziehen schaltet sie wieder ein.
                         // So bleibt die Anordnung beim Umschalten gleich.
-                        PushAlpha(automatic ? 1.0f : kAutoAlpha);
                         const double evMin = CamNumber("ev.min", -3.0);
                         const double evMax = std::max(CamNumber("ev.max", 3.0), evMin + 0.1);
                         const double ev = CamNumber("ev");
                         float t = static_cast<float>((ev - evMin) / (evMax - evMin));
                         SliderStyle style;
                         style.origin = static_cast<float>((0.0 - evMin) / (evMax - evMin));
+                        style.muted = !automatic;
                         const SliderResult r = SliderRow(dl, "##ev", ImVec2(x, y), w, "Belichtungskorrektur",
                                                          SignedDecimal(ev, 1) + " EV", t, style);
                         if (r.changed) {
@@ -1021,18 +1021,19 @@ void App::DrawSettings(ImVec2 min, ImVec2 max) {
                         }
                         if (r.released) FlushCamCommands(true);
                         y += r.height + Px(kRowGap);
-                        PopAlpha();
                     }
                     const double shutterMin = CamNumber("shutter.min");
                     const double shutterMax = CamNumber("shutter.max");
                     const double isoMin = CamNumber("iso.min");
                     const double isoMax = CamNumber("iso.max");
                     if (manualPossible && shutterMin > 0.0 && shutterMax > shutterMin && isoMin > 0.0 && isoMax > isoMin) {
-                        PushAlpha(automatic ? kAutoAlpha : 1.0f);
+                        SliderStyle style;
+                        style.muted = automatic;
                         const double shutter = CamNumber("shutter", shutterMax);
                         const double iso = CamNumber("iso", isoMin);
                         float t = ToLog(shutter, shutterMin, shutterMax);
-                        SliderResult r = SliderRow(dl, "##shutter", ImVec2(x, y), w, "Verschlusszeit", ShutterText(shutter), t);
+                        SliderResult r = SliderRow(dl, "##shutter", ImVec2(x, y), w, "Verschlusszeit", ShutterText(shutter),
+                                                   t, style);
                         if (r.changed) {
                             double value = FromLog(t, shutterMin, shutterMax);
                             if (value < 0.95) value = 1.0 / std::round(1.0 / value);  // glatte Werte wie 1/60
@@ -1044,7 +1045,7 @@ void App::DrawSettings(ImVec2 min, ImVec2 max) {
                         y += r.height + Px(kRowGap);
 
                         t = ToLog(iso, isoMin, isoMax);
-                        r = SliderRow(dl, "##iso", ImVec2(x, y), w, "ISO", std::to_string(std::lround(iso)), t);
+                        r = SliderRow(dl, "##iso", ImVec2(x, y), w, "ISO", std::to_string(std::lround(iso)), t, style);
                         if (r.changed) {
                             SetCamFlag("exposure.auto", false);
                             SetCamNumber("iso", std::round(std::clamp(FromLog(t, isoMin, isoMax), isoMin, isoMax)));
@@ -1052,7 +1053,6 @@ void App::DrawSettings(ImVec2 min, ImVec2 max) {
                         }
                         if (r.released) FlushCamCommands(true);
                         y += r.height;
-                        PopAlpha();
                     } else {
                         y -= Px(kRowGap);
                     }
@@ -1074,7 +1074,6 @@ void App::DrawSettings(ImVec2 min, ImVec2 max) {
                 FlushCamCommands(true);
             }
             y += h + Px(8.0f);
-            PushAlpha(automatic ? kAutoAlpha : 1.0f);
             constexpr double kTempMin = 2500.0;
             constexpr double kTempMax = 8000.0;
             const double temperature = CamNumber("wb.temp", 5000.0);
@@ -1083,6 +1082,7 @@ void App::DrawSettings(ImVec2 min, ImVec2 max) {
             SliderStyle warmth;
             warmth.gradientLeft = IM_COL32(104, 156, 255, 230);
             warmth.gradientRight = IM_COL32(255, 186, 96, 230);
+            warmth.muted = automatic;
             SliderResult r = SliderRow(dl, "##wb_temp", ImVec2(x, y), w, "Farbtemperatur",
                                        std::to_string(std::lround(temperature)) + " K", t, warmth);
             if (r.changed) {
@@ -1097,6 +1097,7 @@ void App::DrawSettings(ImVec2 min, ImVec2 max) {
             t = static_cast<float>((std::clamp(tint, -kTintRange, kTintRange) + kTintRange) / (2.0 * kTintRange));
             SliderStyle centered;
             centered.origin = 0.5f;
+            centered.muted = automatic;
             r = SliderRow(dl, "##wb_tint", ImVec2(x, y), w, "Tönung", SignedDecimal(tint, 0), t, centered);
             if (r.changed) {
                 SetCamFlag("wb.auto", false);
@@ -1105,7 +1106,6 @@ void App::DrawSettings(ImVec2 min, ImVec2 max) {
             }
             if (r.released) FlushCamCommands(true);
             y += r.height;
-            PopAlpha();
             return y - y0;
         });
     }
@@ -1124,18 +1124,18 @@ void App::DrawSettings(ImVec2 min, ImVec2 max) {
                 FlushCamCommands(true);
             }
             y += h + Px(8.0f);
-            PushAlpha(automatic ? kAutoAlpha : 1.0f);
             const double position = std::clamp(CamNumber("focus.pos", 0.5), 0.0, 1.0);
             float t = static_cast<float>(position);
             const std::string value = position < 0.02 ? "Nah" : position > 0.98 ? "Fern" : Decimal(position * 100.0, 0) + " %";
-            const SliderResult r = SliderRow(dl, "##focus_pos", ImVec2(x, y), w, "Entfernung", value, t);
+            SliderStyle style;
+            style.muted = automatic;
+            const SliderResult r = SliderRow(dl, "##focus_pos", ImVec2(x, y), w, "Entfernung", value, t, style);
             if (r.changed) {
                 SetCamFlag("focus.auto", false);
                 SetCamNumber("focus.pos", std::round(t * 1000.0) / 1000.0);
             }
             if (r.released) FlushCamCommands(true);
             y += r.height;
-            PopAlpha();
             return y - y0;
         });
     }
@@ -1173,6 +1173,27 @@ void App::DrawSettings(ImVec2 min, ImVec2 max) {
     }
 
     dl->ChannelsMerge();
+
+    // Weiche Kanten oben und unten, solange dort noch Inhalt verborgen ist.
+    {
+        const ImU32 card = IM_COL32(25, 25, 28, 255);
+        const float fade = Px(26.0f);
+        const ImVec2 windowMin = ImGui::GetWindowPos();
+        const ImVec2 windowMax = windowMin + ImGui::GetWindowSize() - ImVec2(Px(7.0f), 0.0f);  // ohne Bildlaufleiste
+        const float scroll = ImGui::GetScrollY();
+        const float top = std::clamp(scroll / fade, 0.0f, 1.0f);
+        const float below = std::clamp((ImGui::GetScrollMaxY() - scroll) / fade, 0.0f, 1.0f);
+        if (top > 0.0f) {
+            dl->AddRectFilledMultiColor(windowMin, ImVec2(windowMax.x, windowMin.y + fade), A(WithAlpha(card, 0.95f * top)),
+                                        A(WithAlpha(card, 0.95f * top)), A(WithAlpha(card, 0.0f)), A(WithAlpha(card, 0.0f)));
+        }
+        if (below > 0.0f) {
+            dl->AddRectFilledMultiColor(ImVec2(windowMin.x, windowMax.y - fade), windowMax, A(WithAlpha(card, 0.0f)),
+                                        A(WithAlpha(card, 0.0f)), A(WithAlpha(card, 0.95f * below)),
+                                        A(WithAlpha(card, 0.95f * below)));
+        }
+    }
+
     // Platz am Ende, damit sich alles ganz hochscrollen lässt.
     ImGui::SetCursorScreenPos(ImVec2(origin.x, cy));
     ImGui::Dummy(ImVec2(1.0f, 1.0f));

@@ -125,6 +125,7 @@ struct SliderStyle {
     float origin = 0.0f;
     ImU32 gradientLeft = 0;
     ImU32 gradientRight = 0;
+    bool muted = false;  // grau statt blau: der Wert kommt gerade von der Automatik
 };
 float SliderHeight();
 // Gibt true zurück, solange der Wert sich ändert; released = Maus wurde losgelassen.

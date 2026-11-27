@@ -564,21 +564,26 @@ bool Slider(const char* id, ImVec2 pos, float width, float& value, bool& release
     const ImVec2 trackMin(pos.x, centerY - track * 0.5f);
     const ImVec2 trackMax(pos.x + width, centerY + track * 0.5f);
     const float knobX = left + travel * value;
+    // Gedämpft (Automatik): beim Darüberfahren schon farbig, denn Ziehen übernimmt den Wert.
+    const float vivid = style.muted ? hover : 1.0f;
     if (style.gradientLeft || style.gradientRight) {
         // Verlauf ohne abgerundete Enden zeichnen, die Enden als Halbkreise ergänzen.
         const float r = track * 0.5f;
-        dl->AddRectFilledMultiColor(ImVec2(trackMin.x + r, trackMin.y), ImVec2(trackMax.x - r, trackMax.y),
-                                    A(style.gradientLeft), A(style.gradientRight), A(style.gradientRight),
-                                    A(style.gradientLeft));
-        dl->AddCircleFilled(ImVec2(trackMin.x + r, centerY), r, A(style.gradientLeft), 12);
-        dl->AddCircleFilled(ImVec2(trackMax.x - r, centerY), r, A(style.gradientRight), 12);
+        const float alpha = 0.35f + 0.65f * vivid;
+        const ImU32 leftColor = A(WithAlpha(style.gradientLeft, alpha));
+        const ImU32 rightColor = A(WithAlpha(style.gradientRight, alpha));
+        dl->AddRectFilledMultiColor(ImVec2(trackMin.x + r, trackMin.y), ImVec2(trackMax.x - r, trackMax.y), leftColor,
+                                    rightColor, rightColor, leftColor);
+        dl->AddCircleFilled(ImVec2(trackMin.x + r, centerY), r, leftColor, 12);
+        dl->AddCircleFilled(ImVec2(trackMax.x - r, centerY), r, rightColor, 12);
     } else {
         dl->AddRectFilled(trackMin, trackMax, A(White(0.13f + 0.04f * hover)), track * 0.5f);
         const float originX = left + travel * std::clamp(style.origin, 0.0f, 1.0f);
         const float a = std::min(originX, knobX);
         const float b = std::max(originX, knobX);
         if (b - a > 0.5f) {
-            dl->AddRectFilled(ImVec2(a, trackMin.y), ImVec2(b, trackMax.y), A(kAccent), track * 0.5f);
+            dl->AddRectFilled(ImVec2(a, trackMin.y), ImVec2(b, trackMax.y), A(Mix(White(0.28f), kAccent, vivid)),
+                              track * 0.5f);
         }
     }
     // Knopf: wächst beim Darüberfahren, heller Saum beim Ziehen (wie Eidolons Fokus).
@@ -586,7 +591,7 @@ bool Slider(const char* id, ImVec2 pos, float width, float& value, bool& release
     const ImVec2 center(knobX, centerY);
     if (press > 0.01f) dl->AddCircleFilled(center, radius + Px(4.0f), A(White(0.16f * press)), 32);
     dl->AddCircleFilled(center + ImVec2(0.0f, Px(1.0f)), radius, A(IM_COL32(0, 0, 0, 70)), 32);
-    dl->AddCircleFilled(center, radius, A(IM_COL32_WHITE), 32);
+    dl->AddCircleFilled(center, radius, A(Mix(IM_COL32(150, 150, 156, 255), IM_COL32_WHITE, vivid)), 32);
     return changed;
 }
 
