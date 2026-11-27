@@ -20,6 +20,7 @@
 #include <share.h>
 #include <wrl/client.h>
 // ks.h zuletzt: Es braucht IUnknown und definiert GUID_NULL auf seine Art neu.
+#include <avrt.h>
 #include <winternl.h>  // NTSTATUS
 #include <ks.h>
 #include <ksmedia.h>
@@ -161,6 +162,8 @@ public:
                     m_cacheWidth = static_cast<uint32_t>(frameWidth);
                     m_cacheHeight = static_cast<uint32_t>(frameHeight);
                     m_cacheSequence = sequence;
+                } else {
+                    ++collisions;  // KrakznCam schrieb gerade: altes Bild behalten
                 }
             }
         }
@@ -169,6 +172,19 @@ public:
         if (m_cacheWidth != width || m_cacheHeight != height) return false;
         CopyPlanes(m_cache.data(), width, height, dst, pitch);
         return true;
+    }
+
+    // Ereignis „neues Bild“ von KrakznCam (null, solange der gemeinsame Speicher fehlt).
+    HANDLE FrameEvent() {
+        if (!m_header) Open();
+        return m_frameEvent;
+    }
+
+    // Liegt ein Bild bereit, das noch nicht ausgeliefert wurde?
+    bool HasNewFrame() const {
+        if (!m_header) return false;
+        const LONG64 sequence = InterlockedOr64(&m_header->sequence, 0);
+        return (sequence & 1) == 0 && sequence != m_cacheSequence && sequence != 0;
     }
 
     static void CopyPlanes(const uint8_t* source, uint32_t width, uint32_t height, BYTE* dst, LONG pitch) {
@@ -194,6 +210,10 @@ private:
         m_mapping = CreateFileMappingW(INVALID_HANDLE_VALUE, descriptor ? &security : nullptr, PAGE_READWRITE,
                                        size.HighPart, size.LowPart, VCam::MappingName().c_str());
         const DWORD error = GetLastError();
+        if (!m_frameEvent) {
+            m_frameEvent = CreateEventW(descriptor ? &security : nullptr, FALSE, FALSE, VCam::FrameEventName().c_str());
+            if (!m_frameEvent) m_frameEvent = OpenEventW(SYNCHRONIZE | EVENT_MODIFY_STATE, FALSE, VCam::FrameEventName().c_str());
+        }
         if (descriptor) LocalFree(descriptor);
         bool created = m_mapping && error != ERROR_ALREADY_EXISTS;
         if (!m_mapping) {
@@ -224,11 +244,14 @@ private:
     void Close() {
         if (m_header) UnmapViewOfFile(m_header);
         if (m_mapping) CloseHandle(m_mapping);
+        if (m_frameEvent) CloseHandle(m_frameEvent);
         m_header = nullptr;
         m_mapping = nullptr;
+        m_frameEvent = nullptr;
     }
 
     HANDLE m_mapping = nullptr;
+    HANDLE m_frameEvent = nullptr;
     VCam::Header* m_header = nullptr;
     ULONGLONG m_lastAttempt = 0;
     bool m_loggedFailure = false;
@@ -237,6 +260,9 @@ private:
     LONG64 m_cacheSequence = -1;
     uint32_t m_cacheWidth = 0;
     uint32_t m_cacheHeight = 0;
+
+public:
+    uint32_t collisions = 0;  // Statistik: Lesen während des Schreibens
 };
 
 // --- Videostrom ----------------------------------------------------------------------------
@@ -438,39 +464,75 @@ private:
         m_worker.join();
     }
 
-    // Liefert je Anfrage ein Bild, aber nie schneller als die Bildrate.
+    // Liefert ein Bild, sobald KrakznCam ein neues bereitlegt (höchstens mit der gewünschten
+    // Bildrate). Kommt nichts Neues, wird das letzte Bild bzw. der Platzhalter wiederholt.
+    // Früher lief hier eine eigene Uhr; gegen die 60-Hz-Uhr des iPhones gab das doppelte und
+    // fehlende Bilder, also Ruckeln.
     void Worker() {
         using Clock = std::chrono::steady_clock;
         CoInitializeEx(nullptr, COINIT_MULTITHREADED);
+        // Vorrang wie bei Video-Aufnahmen, damit es unter Last (Spiel, OBS) nicht hakt.
+        DWORD taskIndex = 0;
+        HANDLE mmcss = AvSetMmThreadCharacteristicsW(L"Capture", &taskIndex);
+        // Hochauflösender Wecker: normale Wartezeiten sind unter Windows oft auf 16 ms gerundet.
+        HANDLE timer = CreateWaitableTimerExW(nullptr, nullptr, CREATE_WAITABLE_TIMER_HIGH_RESOLUTION, TIMER_ALL_ACCESS);
+        if (!timer) timer = CreateWaitableTimerW(nullptr, FALSE, nullptr);
         uint32_t fps = 30;
         {
             std::lock_guard lock(m_mutex);
             fps = m_fps;
         }
-        const auto period = std::chrono::microseconds(1'000'000 / fps);
-        auto due = Clock::now();
-        const HANDLE events[] = {m_stopEvent, m_requestEvent};
+        const Clock::duration period = std::chrono::microseconds(1'000'000 / fps);
+        Clock::time_point lastDelivery{};
+        Clock::time_point statStart{};
+        uint32_t statFresh = 0;
+        uint32_t statRepeat = 0;
         for (;;) {
-            DWORD timeout = 1000;
             bool pending = false;
             {
                 std::lock_guard lock(m_mutex);
                 pending = !m_tokens.empty() && m_state == MF_STREAM_STATE_RUNNING;
             }
+            const HANDLE frameEvent = m_frames.FrameEvent();
+            Clock::duration wait = std::chrono::seconds(1);
             if (pending) {
-                const auto now = Clock::now();
-                if (now + std::chrono::milliseconds(1) >= due) {
+                const Clock::time_point now = Clock::now();
+                const Clock::duration since = now - lastDelivery;
+                const bool fresh = m_frames.HasNewFrame();
+                // Neues Bild: sofort, aber nicht schneller als die Bildrate (mit Spielraum fürs Zittern).
+                // Nichts Neues: ohne KrakznCam im eigenen Takt (Platzhalter), sonst nach zwei Bildern Pause wiederholen.
+                const Clock::duration earliest = period * 3 / 4;
+                const Clock::duration repeat = frameEvent ? period * 2 : period;
+                const Clock::duration needed = fresh ? earliest : repeat;
+                if (lastDelivery == Clock::time_point{} || since >= needed) {
                     Deliver();
-                    // Gleichmäßiger Takt; wer zu spät dran ist, fängt neu an.
-                    due = now - due < period ? due + period : now + period;
+                    lastDelivery = now;
+                    // Statistik fürs Protokoll (alle 10 s): neue Bilder, Wiederholungen, Lese-Kollisionen.
+                    if (fresh) ++statFresh;
+                    else ++statRepeat;
+                    if (statStart == Clock::time_point{}) statStart = now;
+                    if (now - statStart >= std::chrono::seconds(10)) {
+                        Log("Ausgeliefert in 10 s: %u neue Bilder, %u Wiederholungen, %u Kollisionen (%u FPS gewünscht)",
+                            statFresh, statRepeat, m_frames.collisions, fps);
+                        statFresh = statRepeat = m_frames.collisions = 0;
+                        statStart = now;
+                    }
                     continue;
                 }
-                timeout = static_cast<DWORD>(
-                    std::max<long long>(1, std::chrono::duration_cast<std::chrono::milliseconds>(due - now).count()));
+                wait = needed - since;
             }
-            const DWORD result = WaitForMultipleObjects(2, events, FALSE, timeout);
-            if (result == WAIT_OBJECT_0) break;
+            LARGE_INTEGER due{};
+            due.QuadPart = -std::max<LONGLONG>(1, std::chrono::duration_cast<std::chrono::duration<LONGLONG, std::ratio<1, 10'000'000>>>(wait).count());
+            SetWaitableTimer(timer, &due, 0, nullptr, nullptr, FALSE);
+            HANDLE events[] = {m_stopEvent, m_requestEvent, timer, frameEvent};
+            const DWORD result = WaitForMultipleObjects(frameEvent ? 4 : 3, events, FALSE, INFINITE);
+            if (result == WAIT_OBJECT_0 || result == WAIT_FAILED) break;
         }
+        if (timer) {
+            CancelWaitableTimer(timer);
+            CloseHandle(timer);
+        }
+        if (mmcss) AvRevertMmThreadCharacteristics(mmcss);
         CoUninitialize();
     }
 

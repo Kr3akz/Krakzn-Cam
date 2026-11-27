@@ -58,7 +58,7 @@ add_library(krakzncam_core STATIC
     src/VirtualCamera.cpp)
 target_include_directories(krakzncam_core PUBLIC src)
 target_link_libraries(krakzncam_core PUBLIC
-    ws2_32 d3d11 dxgi mfplat mfuuid wmcodecdspuuid windowscodecs ole32 shell32 advapi32 uuid winhttp bcrypt)
+    ws2_32 d3d11 dxgi mfplat mfuuid wmcodecdspuuid windowscodecs ole32 shell32 advapi32 uuid winhttp bcrypt avrt)
 
 # Oberfläche: Fenster mit eigener Titelleiste und KrakznCam-Design (Programm und Setup).
 add_library(krakzncam_ui STATIC src/UiHost.cpp src/Theme.cpp)
@@ -70,7 +70,7 @@ target_link_libraries(krakzncam PRIVATE krakzncam_core krakzncam_ui d3dcompiler)
 # Virtuelle Kamera (Media Source für den Frame-Server-Dienst von Windows 11).
 add_library(krakzncam_vcam SHARED vcam/VirtualCamera.cpp vcam/Placeholder.cpp vcam/krakzncam_vcam.def)
 target_include_directories(krakzncam_vcam PRIVATE src)
-target_link_libraries(krakzncam_vcam PRIVATE mfplat mfuuid advapi32 gdi32 ole32)
+target_link_libraries(krakzncam_vcam PRIVATE mfplat mfuuid advapi32 gdi32 ole32 avrt)
 
 # Prüfwerkzeug für die virtuelle Kamera (liest Bilder wie OBS und speichert eins als PNG).
 add_executable(krakzncam_vcamtest tools/vcamtest.cpp)

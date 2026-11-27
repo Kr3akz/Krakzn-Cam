@@ -13,7 +13,7 @@
 
 #include <windows.h>
 #include <d3d11.h>
-#include <dxgi1_2.h>
+#include <dxgi1_3.h>
 #include <wrl/client.h>
 
 #include <functional>
@@ -83,6 +83,8 @@ private:
     Microsoft::WRL::ComPtr<ID3D11Device> m_device;
     Microsoft::WRL::ComPtr<ID3D11DeviceContext> m_context;
     Microsoft::WRL::ComPtr<IDXGISwapChain1> m_swapChain;
+    UINT m_swapChainFlags = 0;
+    HANDLE m_frameLatencyWaitable = nullptr;  // signalisiert: ein neues Bild darf gezeichnet werden
     Microsoft::WRL::ComPtr<ID3D11RenderTargetView> m_renderTarget;
     float m_dpiScale = 1.0f;
     bool m_minimized = false;

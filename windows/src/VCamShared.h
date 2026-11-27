@@ -72,4 +72,10 @@ inline std::wstring MappingName() {
     return length > 0 && length < 128 ? std::wstring(value, length) : std::wstring(kMappingName);
 }
 
+// Ereignis „neues Bild liegt bereit“: KrakznCam setzt es nach jedem Bild, die Kamera liefert dann
+// sofort aus, statt nach eigener Uhr (zwei 60-Hz-Uhren laufen sonst auseinander und es ruckelt).
+inline std::wstring FrameEventName() {
+    return MappingName() + L"Frame";
+}
+
 }  // namespace VCam

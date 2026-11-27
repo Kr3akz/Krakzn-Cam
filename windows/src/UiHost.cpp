@@ -35,6 +35,7 @@ UiHost::~UiHost() {
         ImGui_ImplWin32_Shutdown();
         ImGui::DestroyContext();
     }
+    if (m_frameLatencyWaitable) CloseHandle(m_frameLatencyWaitable);
     m_renderTarget.Reset();
     m_swapChain.Reset();
     if (m_hwnd && IsWindow(m_hwnd)) DestroyWindow(m_hwnd);
@@ -161,14 +162,28 @@ bool UiHost::CreateSwapChain() {
     desc.BufferCount = 2;
     desc.SwapEffect = DXGI_SWAP_EFFECT_FLIP_DISCARD;
     desc.Scaling = DXGI_SCALING_NONE;
+    // Mit Warte-Objekt: Das Warten auf den Bildschirm passiert vor dem Zeichnen und ohne die
+    // Grafikkarte zu sperren. Sonst hält Present() sie bis zu 16 ms fest, und Decoder und
+    // virtuelle Kamera müssen so lange warten.
+    desc.Flags = DXGI_SWAP_CHAIN_FLAG_FRAME_LATENCY_WAITABLE_OBJECT;
     HRESULT hr = factory->CreateSwapChainForHwnd(m_device.Get(), m_hwnd, &desc, nullptr, nullptr, &m_swapChain);
     if (FAILED(hr)) {
         desc.Scaling = DXGI_SCALING_STRETCH;
         hr = factory->CreateSwapChainForHwnd(m_device.Get(), m_hwnd, &desc, nullptr, nullptr, &m_swapChain);
     }
     if (FAILED(hr)) {
+        desc.Flags = 0;
+        hr = factory->CreateSwapChainForHwnd(m_device.Get(), m_hwnd, &desc, nullptr, nullptr, &m_swapChain);
+    }
+    if (FAILED(hr)) {
         LogLine("Swapchain konnte nicht erstellt werden (0x%08X)", static_cast<unsigned>(hr));
         return false;
+    }
+    m_swapChainFlags = desc.Flags;
+    ComPtr<IDXGISwapChain2> swapChain2;
+    if (m_swapChainFlags && SUCCEEDED(m_swapChain.As(&swapChain2))) {
+        swapChain2->SetMaximumFrameLatency(1);
+        m_frameLatencyWaitable = swapChain2->GetFrameLatencyWaitableObject();
     }
     factory->MakeWindowAssociation(m_hwnd, DXGI_MWA_NO_ALT_ENTER);
     return CreateRenderTarget();
@@ -187,6 +202,8 @@ bool UiHost::ProcessMessages(bool* hadInput) {
 }
 
 void UiHost::BeginFrame() {
+    // Erst warten, bis der Bildschirm ein neues Bild annimmt (sperrt nichts), dann zeichnen.
+    if (m_frameLatencyWaitable) WaitForSingleObjectEx(m_frameLatencyWaitable, 100, TRUE);
     ImGui_ImplDX11_NewFrame();
     ImGui_ImplWin32_NewFrame();
     if (!pendingInput.empty()) {
@@ -312,7 +329,7 @@ LRESULT UiHost::HandleMessage(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
         m_minimized = wParam == SIZE_MINIMIZED;
         if (m_swapChain && !m_minimized) {
             m_renderTarget.Reset();
-            m_swapChain->ResizeBuffers(0, LOWORD(lParam), HIWORD(lParam), DXGI_FORMAT_UNKNOWN, 0);
+            m_swapChain->ResizeBuffers(0, LOWORD(lParam), HIWORD(lParam), DXGI_FORMAT_UNKNOWN, m_swapChainFlags);
             CreateRenderTarget();
         }
         return 0;

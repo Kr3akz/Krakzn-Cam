@@ -171,6 +171,12 @@ int wmain(int argc, wchar_t** argv) {
     int received = 0;
     Clock::time_point first;
     Clock::time_point lastTime;
+    // Gleichmäßigkeit: doppelte Bilder (gleicher Inhalt wie das vorige) und lange Abstände zählen.
+    int duplicates = 0;
+    int longGaps = 0;
+    double maxGapMs = 0.0;
+    uint64_t previousHash = 0;
+    const double periodMs = 1000.0 / options.fps;
     for (int i = 0; i < options.frames * 3 && received < options.frames; ++i) {
         DWORD stream = 0, flags = 0;
         LONGLONG timestamp = 0;
@@ -178,7 +184,13 @@ int wmain(int argc, wchar_t** argv) {
         hr = reader->ReadSample(static_cast<DWORD>(MF_SOURCE_READER_FIRST_VIDEO_STREAM), 0, &stream, &flags, &timestamp, &sample);
         if (FAILED(hr)) return Fail("ReadSample", hr);
         if (!sample) continue;
-        lastTime = Clock::now();
+        const Clock::time_point now = Clock::now();
+        if (received > 0) {
+            const double gap = std::chrono::duration<double, std::milli>(now - lastTime).count();
+            maxGapMs = std::max(maxGapMs, gap);
+            if (gap > periodMs * 1.5) ++longGaps;
+        }
+        lastTime = now;
         if (received == 0) first = lastTime;
         ++received;
         ComPtr<IMFMediaBuffer> buffer;
@@ -188,10 +200,17 @@ int wmain(int argc, wchar_t** argv) {
         if (SUCCEEDED(buffer->Lock(&data, nullptr, &length))) {
             last.assign(data, data + length);
             buffer->Unlock();
+            // FNV-1a über alle Bytes: auch kleine Änderungen (Zeitcode) zählen.
+            uint64_t hash = 1469598103934665603ull;
+            for (size_t b = 0; b < last.size(); ++b) hash = (hash ^ last[b]) * 1099511628211ull;
+            if (received > 1 && hash == previousHash) ++duplicates;
+            previousHash = hash;
         }
     }
     const double seconds = std::chrono::duration<double>(lastTime - first).count();
     printf("%d Bilder gelesen, %.1f FPS\n", received, received > 1 && seconds > 0 ? (received - 1) / seconds : 0.0);
+    printf("Gleichmäßigkeit: %d doppelte Bilder, %d lange Abstände (> %.0f ms), längster Abstand %.1f ms\n", duplicates,
+           longGaps, periodMs * 1.5, maxGapMs);
     if (last.size() >= VCam::FrameBytes(options.width, options.height)) {
         printf("Letztes Bild: %s\n", SavePng(last, options.width, options.height, options.out) ? "gespeichert" : "Fehler");
     }

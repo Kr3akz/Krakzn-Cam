@@ -6,6 +6,8 @@
 #include "StreamProtocol.h"
 #include "Usbmux.h"
 
+#include <avrt.h>
+
 #include <chrono>
 #include <map>
 #include <vector>
@@ -90,6 +92,10 @@ bool StreamClient::WaitForStop(DWORD milliseconds) {
 
 void StreamClient::Run() {
     CoInitializeEx(nullptr, COINIT_MULTITHREADED);
+    // Vorrang wie bei Video-Aufnahmen: Empfang und Dekodieren dürfen nicht hinter Spiel oder OBS warten,
+    // sonst läuft der Puffer im iPhone voll und es gibt einen Sprung im Bild.
+    DWORD taskIndex = 0;
+    HANDLE mmcss = AvSetMmThreadCharacteristicsW(L"Capture", &taskIndex);
     while (m_running) {
         SOCKET s = OpenConnection();
         if (s == INVALID_SOCKET) {
@@ -111,6 +117,7 @@ void StreamClient::Run() {
         SetState(StreamStatus::State::Starting);
         if (WaitForStop(500)) break;
     }
+    if (mmcss) AvRevertMmThreadCharacteristics(mmcss);
     CoUninitialize();
 }
 
@@ -200,6 +207,15 @@ void StreamClient::Serve(SOCKET s) {
     auto lastKeyframeRequest = Clock::now() - std::chrono::seconds(10);
     uint64_t windowFrames = 0;
     uint64_t windowBytes = 0;
+    // Für das Protokoll (alle 10 s): größte Lücken beim Empfangen und Dekodieren, längstes Dekodieren.
+    auto statStart = Clock::now();
+    Clock::time_point lastReceived{};
+    Clock::time_point lastDecoded{};
+    double maxReceiveGap = 0.0;
+    double maxDecodeGap = 0.0;
+    double maxDecodeTime = 0.0;
+    uint64_t statFrames = 0;
+    auto milliseconds = [](Clock::duration d) { return std::chrono::duration<double, std::milli>(d).count(); };
 
     while (m_running && KrakznCam::ReadMessage(s, type, payload)) {
         if (type == KrakznCam::kMsgHello) {
@@ -220,7 +236,15 @@ void StreamClient::Serve(SOCKET s) {
             const uint8_t* data = payload.data() + 9;
             size_t size = payload.size() - 9;
             windowBytes += size;
+            const Clock::time_point received = Clock::now();
+            if (lastReceived != Clock::time_point{}) maxReceiveGap = std::max(maxReceiveGap, milliseconds(received - lastReceived));
+            lastReceived = received;
             bool ok = decoder.Decode(data, size, pts, [&](const DecodedFrame& frame) {
+                const Clock::time_point decoded = Clock::now();
+                if (lastDecoded != Clock::time_point{}) maxDecodeGap = std::max(maxDecodeGap, milliseconds(decoded - lastDecoded));
+                lastDecoded = decoded;
+                maxDecodeTime = std::max(maxDecodeTime, milliseconds(decoded - received));
+                ++statFrames;
                 if (frame.texture) {
                     m_store.StoreFromTexture(frame.texture, frame.subresource, frame.displayWidth,
                                              frame.displayHeight, frame.ptsMicros);
@@ -254,6 +278,15 @@ void StreamClient::Serve(SOCKET s) {
             windowStart = now;
             windowFrames = 0;
             windowBytes = 0;
+        }
+        const double statSeconds = std::chrono::duration<double>(now - statStart).count();
+        if (statSeconds >= 10.0) {
+            LogLine("Empfang: %.1f Bilder/s, größte Lücke beim Empfang %.0f ms, beim Dekodieren %.0f ms, längstes "
+                    "Dekodieren %.1f ms",
+                    statFrames / statSeconds, maxReceiveGap, maxDecodeGap, maxDecodeTime);
+            statStart = now;
+            statFrames = 0;
+            maxReceiveGap = maxDecodeGap = maxDecodeTime = 0.0;
         }
     }
 }

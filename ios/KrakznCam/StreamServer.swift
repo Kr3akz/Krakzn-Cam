@@ -27,10 +27,15 @@ final class StreamServer {
     private var clientFD: Int32 = -1
     private var generation = 0
     private var queuedFrames = 0
+    private var queuedBytes = 0
     private var waitingForKeyframe = true
     private var helloInfo: [String: Any] = [:]
-    /// Wie viele Frames höchstens auf das Senden warten dürfen, bevor verworfen wird.
-    private let maxQueuedFrames = 3
+    /// Wie viele Frames höchstens auf das Senden warten dürfen, bevor verworfen wird: etwa eine
+    /// Viertelsekunde. Früher waren es 3 Frames (50 ms bei 60 FPS); dann führte jeder kurze Hänger
+    /// am PC (Spiel, OBS) zu einem Sprung im Bild und einem großen Keyframe hinterher.
+    private var maxQueuedFrames = 15
+    /// Obergrenze in Bytes, damit 4K mit hoher Bitrate nicht beliebig viel puffert.
+    private let maxQueuedBytes = 8 * 1024 * 1024
     private let sendQueue = DispatchQueue(label: "KrakznCam.send", qos: .userInteractive)
 
     init(port: UInt16) {
@@ -54,6 +59,13 @@ final class StreamServer {
         thread.start()
     }
 
+    /// Passt den Puffer an die Bildrate an (eine Viertelsekunde, mindestens 4 Frames).
+    func setFrameRate(_ fps: Int) {
+        lock.lock()
+        defer { lock.unlock() }
+        maxQueuedFrames = max(4, fps / 4)
+    }
+
     /// Speichert die Formatinfos. Sie gehen bei jeder neuen Verbindung als erste
     /// Nachricht raus und sofort, falls gerade ein PC verbunden ist.
     func setHello(_ info: [String: Any]) {
@@ -73,7 +85,7 @@ final class StreamServer {
             lock.unlock()
             return
         }
-        if queuedFrames >= maxQueuedFrames {
+        if queuedFrames >= maxQueuedFrames || queuedBytes >= maxQueuedBytes {
             let alreadyWaiting = waitingForKeyframe
             waitingForKeyframe = true
             lock.unlock()
@@ -87,12 +99,13 @@ final class StreamServer {
             return
         }
         waitingForKeyframe = false
+        let message = MessageCodec.videoFrame(ptsMicros: ptsMicros, keyframe: keyframe, annexB: annexB)
         queuedFrames += 1
+        queuedBytes += message.count
         let fd = clientFD
         let gen = generation
         lock.unlock()
 
-        let message = MessageCodec.videoFrame(ptsMicros: ptsMicros, keyframe: keyframe, annexB: annexB)
         sendQueue.async { [weak self] in
             self?.write(message, fd: fd, generation: gen, isFrame: true)
         }
@@ -136,6 +149,7 @@ final class StreamServer {
         generation += 1
         clientFD = fd
         queuedFrames = 0
+        queuedBytes = 0
         waitingForKeyframe = true
         enqueueHelloLocked()
         lock.unlock()
@@ -230,6 +244,7 @@ final class StreamServer {
         lock.lock()
         if isFrame && gen == generation {
             queuedFrames -= 1
+            queuedBytes -= message.count
         }
         lock.unlock()
 
@@ -286,6 +301,9 @@ final class StreamServer {
         let intSize = socklen_t(MemoryLayout<Int32>.size)
         setsockopt(fd, SOL_SOCKET, SO_NOSIGPIPE, &on, intSize)
         setsockopt(fd, Int32(IPPROTO_TCP), TCP_NODELAY, &on, intSize)
+        // Großer Sendepuffer: Ein 4K-Keyframe passt komplett hinein, ohne dass send() blockiert.
+        var sendBuffer: Int32 = 2 * 1024 * 1024
+        setsockopt(fd, SOL_SOCKET, SO_SNDBUF, &sendBuffer, intSize)
         // Hängt der PC komplett, bricht send() nach 2 s ab und die Verbindung wird beendet.
         var timeout = timeval(tv_sec: 2, tv_usec: 0)
         setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO, &timeout, socklen_t(MemoryLayout<timeval>.size))

@@ -167,6 +167,7 @@ final class AppModel: ObservableObject {
         guard started else { return }
         let current = settings
         encoder.update(fps: current.fps, bitrate: current.bitrate)
+        server.setFrameRate(current.fps)
         camera.configure(lens: current.lens, resolution: current.resolution, fps: current.fps) { [weak self] error in
             guard let self else { return }
             self.cameraError = error

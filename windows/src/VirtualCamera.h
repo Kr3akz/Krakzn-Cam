@@ -6,6 +6,7 @@
 #include <wrl/client.h>
 
 #include <atomic>
+#include <chrono>
 #include <cstdint>
 #include <mutex>
 #include <string>
@@ -86,7 +87,19 @@ private:
     HANDLE m_mapping = nullptr;
     VCam::Header* m_header = nullptr;
     ULONGLONG m_lastOpenAttempt = 0;
-    ULONGLONG m_lastWrite = 0;
+    HANDLE m_frameReadyEvent = nullptr;  // „neues Bild“ an die Kamera
+    ULONGLONG m_lastEventAttempt = 0;
+    std::chrono::steady_clock::time_point m_lastWriteTime;
+    // Zwei Zwischenpuffer im Wechsel: Die Grafikkarte rechnet das neue Bild, während das vorige,
+    // längst fertige ausgelesen wird. So muss nie auf die Grafikkarte gewartet werden.
+    Microsoft::WRL::ComPtr<ID3D11Query> m_copyDone[2];
+    bool m_stagingFull[2] = {false, false};
+    int m_stagingNext = 0;
+    std::chrono::steady_clock::time_point m_statStart;
+    uint32_t m_statFrames = 0;
+    double m_statTotalMs = 0.0;
+    double m_statMaxMs = 0.0;
+    double m_statMaxGapMs = 0.0;
     uint64_t m_lastCounter = 0;
     Microsoft::WRL::ComPtr<ID3D11VideoDevice> m_videoDevice;
     Microsoft::WRL::ComPtr<ID3D11VideoContext> m_videoContext;
@@ -95,7 +108,7 @@ private:
     Microsoft::WRL::ComPtr<ID3D11VideoProcessorInputView> m_inputView;
     Microsoft::WRL::ComPtr<ID3D11VideoProcessorOutputView> m_outputView;
     Microsoft::WRL::ComPtr<ID3D11Texture2D> m_output;
-    Microsoft::WRL::ComPtr<ID3D11Texture2D> m_staging;
+    Microsoft::WRL::ComPtr<ID3D11Texture2D> m_staging[2];
     ID3D11Texture2D* m_configuredInput = nullptr;
     FrameInfo m_configuredInfo;
     UINT m_outputWidth = 0;

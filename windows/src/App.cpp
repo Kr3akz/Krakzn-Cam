@@ -1005,6 +1005,12 @@ void App::DrawSettings(ImVec2 min, ImVec2 max) {
                 FlushCamCommands(true);
             }
             y += h + Px(kRowGap);
+            if (selected == 2) {
+                y += NoteRow(dl, ImVec2(x, y - Px(4.0f)), w,
+                             "4K kostet viel Leistung und Akku. Die virtuelle Kamera gibt höchstens 1080p aus, "
+                             "fürs Streamen reicht 1080p.") +
+                     Px(kRowGap - 4.0f);
+            }
 
             static constexpr std::string_view kFps[] = {"24", "30", "60"};
             static const int kFpsValues[] = {24, 30, 60};
