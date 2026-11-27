@@ -57,54 +57,61 @@ void DrawLogo(ID2D1RenderTarget* target, float size, bool rounded) {
 
     const D2D1_POINT_2F center = D2D1::Point2F(512.0f * s, 432.0f * s);
 
-    // Standfuß: schmaler Hals und abgerundeter Sockel, leicht grau, damit die Linse führt.
+    // Standfuß: schlanker Hals und flacher Sockel in Grau, damit die Linse führt.
     ComPtr<ID2D1LinearGradientBrush> stand;
     target->CreateLinearGradientBrush(
-        D2D1::LinearGradientBrushProperties(D2D1::Point2F(0, 660.0f * s), D2D1::Point2F(0, 850.0f * s)),
-        Stops(target, {{0.0f, Rgb(214, 216, 224)}, {1.0f, Rgb(160, 162, 172)}}).Get(), &stand);
+        D2D1::LinearGradientBrushProperties(D2D1::Point2F(0, 680.0f * s), D2D1::Point2F(0, 840.0f * s)),
+        Stops(target, {{0.0f, Rgb(200, 202, 210)}, {1.0f, Rgb(140, 142, 152)}}).Get(), &stand);
     target->FillRoundedRectangle(
-        D2D1::RoundedRect(D2D1::RectF(482.0f * s, 660.0f * s, 542.0f * s, 800.0f * s), 30.0f * s, 30.0f * s),
+        D2D1::RoundedRect(D2D1::RectF(488.0f * s, 680.0f * s, 536.0f * s, 800.0f * s), 24.0f * s, 24.0f * s),
         stand.Get());
     target->FillRoundedRectangle(
-        D2D1::RoundedRect(D2D1::RectF(338.0f * s, 772.0f * s, 686.0f * s, 836.0f * s), 32.0f * s, 32.0f * s),
+        D2D1::RoundedRect(D2D1::RectF(362.0f * s, 786.0f * s, 662.0f * s, 834.0f * s), 24.0f * s, 24.0f * s),
         stand.Get());
 
-    // Linse: weißer Ring, blaue Iris (Akzentfarbe), dunkle Pupille, zwei Lichtpunkte.
+    // Gehäuse: weißer Ring mit leichtem Verlauf und weichem Schatten darunter.
     ComPtr<ID2D1SolidColorBrush> shadow;
-    target->CreateSolidColorBrush(Rgb(0, 0, 0, 0.35f), &shadow);
-    target->FillEllipse(D2D1::Ellipse(D2D1::Point2F(center.x, center.y + 18.0f * s), 286.0f * s, 286.0f * s),
+    target->CreateSolidColorBrush(Rgb(0, 0, 0, 0.32f), &shadow);
+    target->FillEllipse(D2D1::Ellipse(D2D1::Point2F(center.x, center.y + 16.0f * s), 284.0f * s, 284.0f * s),
                         shadow.Get());
     ComPtr<ID2D1LinearGradientBrush> ring;
     target->CreateLinearGradientBrush(
-        D2D1::LinearGradientBrushProperties(D2D1::Point2F(0, 146.0f * s), D2D1::Point2F(0, 718.0f * s)),
-        Stops(target, {{0.0f, Rgb(250, 250, 252)}, {1.0f, Rgb(206, 208, 216)}}).Get(), &ring);
+        D2D1::LinearGradientBrushProperties(D2D1::Point2F(0, 152.0f * s), D2D1::Point2F(0, 712.0f * s)),
+        Stops(target, {{0.0f, Rgb(250, 250, 252)}, {1.0f, Rgb(204, 206, 214)}}).Get(), &ring);
     target->FillEllipse(D2D1::Ellipse(center, 280.0f * s, 280.0f * s), ring.Get());
 
-    ComPtr<ID2D1SolidColorBrush> gap;
-    target->CreateSolidColorBrush(Rgb(14, 14, 18), &gap);
-    target->FillEllipse(D2D1::Ellipse(center, 226.0f * s, 226.0f * s), gap.Get());
+    // Objektiv: schwarze Fassung, dunkles Glas mit einem Hauch Blau, feiner blauer Ring (Akzent).
+    ComPtr<ID2D1SolidColorBrush> bezel;
+    target->CreateSolidColorBrush(Rgb(12, 12, 16), &bezel);
+    target->FillEllipse(D2D1::Ellipse(center, 232.0f * s, 232.0f * s), bezel.Get());
 
-    ComPtr<ID2D1RadialGradientBrush> iris;
+    ComPtr<ID2D1RadialGradientBrush> glass;
     target->CreateRadialGradientBrush(
-        D2D1::RadialGradientBrushProperties(D2D1::Point2F(center.x - 60.0f * s, center.y - 70.0f * s),
-                                            D2D1::Point2F(0, 0), 300.0f * s, 300.0f * s),
-        Stops(target, {{0.0f, Rgb(120, 176, 255)}, {0.45f, Rgb(46, 125, 246)}, {1.0f, Rgb(16, 52, 132)}}).Get(),
-        &iris);
-    target->FillEllipse(D2D1::Ellipse(center, 196.0f * s, 196.0f * s), iris.Get());
+        D2D1::RadialGradientBrushProperties(D2D1::Point2F(center.x - 70.0f * s, center.y - 80.0f * s),
+                                            D2D1::Point2F(0, 0), 330.0f * s, 330.0f * s),
+        Stops(target, {{0.0f, Rgb(44, 64, 104)}, {0.5f, Rgb(18, 26, 46)}, {1.0f, Rgb(6, 8, 14)}}).Get(), &glass);
+    target->FillEllipse(D2D1::Ellipse(center, 206.0f * s, 206.0f * s), glass.Get());
 
-    ComPtr<ID2D1RadialGradientBrush> pupil;
+    ComPtr<ID2D1SolidColorBrush> accent;
+    target->CreateSolidColorBrush(Rgb(46, 125, 246), &accent);
+    target->DrawEllipse(D2D1::Ellipse(center, 138.0f * s, 138.0f * s), accent.Get(), 14.0f * s);
+
+    ComPtr<ID2D1RadialGradientBrush> core;
     target->CreateRadialGradientBrush(
-        D2D1::RadialGradientBrushProperties(center, D2D1::Point2F(0, 0), 92.0f * s, 92.0f * s),
-        Stops(target, {{0.0f, Rgb(6, 8, 14)}, {0.85f, Rgb(10, 14, 26)}, {1.0f, Rgb(18, 36, 80)}}).Get(), &pupil);
-    target->FillEllipse(D2D1::Ellipse(center, 92.0f * s, 92.0f * s), pupil.Get());
+        D2D1::RadialGradientBrushProperties(center, D2D1::Point2F(0, 0), 96.0f * s, 96.0f * s),
+        Stops(target, {{0.0f, Rgb(4, 5, 9)}, {0.8f, Rgb(8, 11, 20)}, {1.0f, Rgb(22, 40, 84)}}).Get(), &core);
+    target->FillEllipse(D2D1::Ellipse(center, 96.0f * s, 96.0f * s), core.Get());
 
+    // Spiegelung: ein weicher großer Schein und ein klarer kleiner Lichtpunkt oben links.
+    ComPtr<ID2D1RadialGradientBrush> sheen;
+    const D2D1_POINT_2F sheenCenter = D2D1::Point2F(center.x - 84.0f * s, center.y - 92.0f * s);
+    target->CreateRadialGradientBrush(
+        D2D1::RadialGradientBrushProperties(sheenCenter, D2D1::Point2F(0, 0), 110.0f * s, 110.0f * s),
+        Stops(target, {{0.0f, Rgb(255, 255, 255, 0.26f)}, {1.0f, Rgb(255, 255, 255, 0.0f)}}).Get(), &sheen);
+    target->FillEllipse(D2D1::Ellipse(sheenCenter, 110.0f * s, 110.0f * s), sheen.Get());
     ComPtr<ID2D1SolidColorBrush> glint;
-    target->CreateSolidColorBrush(Rgb(255, 255, 255, 0.92f), &glint);
-    target->FillEllipse(D2D1::Ellipse(D2D1::Point2F(center.x - 74.0f * s, center.y - 78.0f * s), 34.0f * s, 34.0f * s),
-                        glint.Get());
-    glint->SetOpacity(0.45f);
-    target->FillEllipse(D2D1::Ellipse(D2D1::Point2F(center.x + 62.0f * s, center.y + 58.0f * s), 14.0f * s, 14.0f * s),
-                        glint.Get());
+    target->CreateSolidColorBrush(Rgb(255, 255, 255, 0.95f), &glint);
+    target->FillEllipse(D2D1::Ellipse(sheenCenter, 24.0f * s, 24.0f * s), glint.Get());
 }
 
 // Rendert das Logo und gibt PNG-Bytes zurück. opaque: Hintergrund statt Transparenz (für iOS).
@@ -208,6 +215,9 @@ int wmain(int argc, wchar_t** argv) {
         SaveFile(folder + L"\\preview-" + std::to_wstring(size) + L".png", RenderPng(size, true, false));
     }
     printf("Symbole geschrieben nach %ls\n", folder.c_str());
+    // Fabriken vor CoUninitialize freigeben, sonst stürzt das Programm beim Beenden ab.
+    g_wic.Reset();
+    g_d2d.Reset();
     CoUninitialize();
     return 0;
 }
