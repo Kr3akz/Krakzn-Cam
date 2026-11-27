@@ -403,7 +403,7 @@ float App::DrawHero(ImDrawList* dl, ImVec2 pos, float width, const StreamStatus&
                           "Die Signatur läuft bald ab. Sideloadly erneuert sie gerade automatisch, die App auf dem "
                           "iPhone startet dabei kurz neu.") +
                  Px(16.0f);
-        } else if ((expired || days <= 2) && renew == AutoRenew::State::Waiting) {
+        } else if ((expired || days <= 1) && renew == AutoRenew::State::Waiting) {
             y += InfoNote(dl, ImVec2(pos.x, y), width,
                           "Die Signatur läuft am " + ShortDate(status.signatureExpires) +
                               " ab. KrakznCam lässt sie rechtzeitig von Sideloadly erneuern.") +
@@ -654,7 +654,7 @@ float App::DrawSetupList(ImDrawList* dl, ImVec2 pos, float width, float minHeigh
             detail = "Aus. Der Sideloadly-Dienst startet dann mit Windows und läuft dauerhaft im Hintergrund.";
             break;
         default:
-            detail = "KrakznCam startet Sideloadly nur, wenn die Signatur in weniger als 2 Tagen abläuft.";
+            detail = "KrakznCam startet Sideloadly nur, wenn die Signatur in weniger als 24 Stunden abläuft.";
             if (m_renew.KnownExpiry() > 0) detail += " Gültig bis " + LongDate(m_renew.KnownExpiry()) + ".";
             break;
         }

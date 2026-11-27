@@ -8,12 +8,14 @@
 #include <string>
 
 // Erneuert die App-Signatur nur bei Bedarf: KrakznCam startet den Sideloadly-Hintergrunddienst,
-// wenn die Signatur in weniger als zwei Tagen abläuft, und beendet ihn wieder, sobald sie
+// wenn die Signatur in weniger als 24 Stunden abläuft, und beendet ihn wieder, sobald sie
 // erneuert ist (oder KrakznCam geschlossen wird). Sideloadlys eigener Windows-Autostart wird
 // dafür abgeschaltet und beim Ausschalten der Funktion wiederhergestellt.
 //
-// Warum zwei Tage: Sideloadly erneuert nach 96 Stunden (4 von 7 Tagen). Startet der Dienst erst,
-// wenn weniger als 2 Tage übrig sind, ist die Erneuerung sicher fällig und passiert sofort.
+// Warum 24 Stunden: Sideloadly erneuert frühestens nach 96 Stunden (4 von 7 Tagen); am letzten
+// Tag ist die Erneuerung also sicher fällig und passiert sofort. Später heißt seltener erneuern.
+// Ist die Signatur schon abgelaufen, startet der Dienst beim nächsten Start von KrakznCam und
+// holt die Erneuerung nach (das gespeicherte Ablaufdatum reicht dafür).
 class AutoRenew {
 public:
     enum class State {
@@ -37,7 +39,7 @@ public:
     State GetState() const { return m_state; }
     int64_t KnownExpiry() const { return m_expiry; }
 
-    static constexpr int64_t kRenewBefore = 2 * 86400;
+    static constexpr int64_t kRenewBefore = 24 * 3600;
 
 private:
     void Save();
