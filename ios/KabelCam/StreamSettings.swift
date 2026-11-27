@@ -64,7 +64,7 @@ enum StreamQuality: String, Codable, CaseIterable, Identifiable {
 struct StreamSettings: Codable, Equatable {
     var lens: CameraLens = .wide
     var resolution: VideoResolution = .hd1080
-    var fps: Int = 30
+    var fps: Int = 60  // fürs Streaming flüssiger; 30 spart Akku und Wärme
     var quality: StreamQuality = .high
 
     static let fpsOptions = [24, 30, 60]

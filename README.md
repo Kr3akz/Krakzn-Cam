@@ -41,7 +41,9 @@ iPhone                                       Windows-PC
 2. iPhone per Kabel anschließen, entsperren und **„Diesem Computer vertrauen“** bestätigen.
 3. In Sideloadly die `.ipa` hineinziehen, deine Apple-ID eintragen und auf **Start** klicken.
 4. Auf dem iPhone:
-   - **Einstellungen → Datenschutz & Sicherheit → Entwicklermodus** einschalten. Das iPhone startet dafür neu.
+   - **Einstellungen → Datenschutz & Sicherheit → Entwicklermodus** einschalten (ganz unten, Abschnitt „Sicherheit“).
+     Der Schalter erscheint erst, wenn Sideloadly die App installiert hat. Einen Mac brauchst du dafür nicht.
+     Das iPhone startet danach neu, anschließend mit „Aktivieren“ bestätigen.
    - **Einstellungen → Allgemein → VPN & Geräteverwaltung** öffnen, deine Apple-ID antippen und **vertrauen**.
 5. KabelCam öffnen und den Kamerazugriff erlauben.
 

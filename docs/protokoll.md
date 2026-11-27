@@ -40,11 +40,15 @@ Verbindungsaufbau als erste Nachricht und erneut nach jeder Änderung der Einste
   "height": 1080,
   "fps": 30,
   "bitrate": 12000000,
-  "lens": "wide"
+  "lens": "wide",
+  "signatureExpires": 1765000000
 }
 ```
 
-Unbekannte Felder werden ignoriert.
+- `signatureExpires` gibt das Ablaufdatum der App-Signatur in Unix-Sekunden an.
+  Sideloadly signiert mit kostenloser Apple-ID für 7 Tage. Das Feld fehlt, wenn die App
+  kein Signaturprofil hat.
+- Unbekannte Felder werden ignoriert.
 
 ### `0x02` VIDEO_FRAME (iPhone → PC)
 

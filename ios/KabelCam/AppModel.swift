@@ -120,7 +120,7 @@ final class AppModel: ObservableObject {
 
     private static func helloInfo(for settings: StreamSettings) -> [String: Any] {
         let size = settings.resolution.size
-        return [
+        var info: [String: Any] = [
             "version": KabelCamProtocol.version,
             "app": "KabelCam",
             "codec": "h264",
@@ -130,5 +130,10 @@ final class AppModel: ObservableObject {
             "bitrate": settings.bitrate,
             "lens": settings.lens.rawValue,
         ]
+        // Damit das Windows-Programm rechtzeitig ans Erneuern mit Sideloadly erinnern kann.
+        if let expiration = ProvisioningInfo.expirationDate {
+            info["signatureExpires"] = Int(expiration.timeIntervalSince1970)
+        }
+        return info
     }
 }

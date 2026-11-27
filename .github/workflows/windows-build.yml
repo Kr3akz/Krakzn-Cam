@@ -1,0 +1,36 @@
+# Baut das Windows-Programm in der Cloud. Niemand muss dafür Visual Studio installieren.
+# Ergebnis: Artefakt "KabelCam-Windows" mit kabelcam.exe und der Testquelle kabelcam_fakephone.exe.
+name: Windows-Programm bauen
+
+on:
+  push:
+    paths:
+      - "windows/**"
+      - ".github/workflows/windows-build.yml"
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: windows-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Konfigurieren
+        run: cmake -S windows -B build -A x64
+
+      - name: Bauen
+        run: cmake --build build --config Release --parallel
+
+      - name: Paket zusammenstellen
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force dist | Out-Null
+          Copy-Item build/Release/kabelcam.exe, build/Release/kabelcam_fakephone.exe dist/
+          Get-ChildItem dist | Format-Table Name, Length
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: KabelCam-Windows
+          path: dist/
+          if-no-files-found: error

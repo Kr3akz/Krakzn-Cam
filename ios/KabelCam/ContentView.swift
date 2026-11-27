@@ -162,6 +162,16 @@ struct SettingsPanel: View {
                 Text("Das Bild wird weiter übertragen. Antippen weckt den Bildschirm wieder auf.")
             }
 
+            if let expiration = ProvisioningInfo.expirationDate {
+                Section {
+                    Label("Signatur gültig bis \(expiration.formatted(date: .abbreviated, time: .omitted))",
+                          systemImage: "signature")
+                        .foregroundStyle(expiration.timeIntervalSinceNow < 2 * 86400 ? Color.orange : Color.secondary)
+                } footer: {
+                    Text("Danach die App mit Sideloadly neu aufspielen.")
+                }
+            }
+
             Section("So geht's") {
                 Text("1. iPhone per Kabel mit dem PC verbinden\n2. KabelCam auf dem PC starten\n3. In Zoom, Teams usw. die Kamera „KabelCam“ wählen\n\nDie App muss dafür geöffnet bleiben.")
                     .font(.footnote)
