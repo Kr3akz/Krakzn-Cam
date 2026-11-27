@@ -183,7 +183,9 @@ void WriteUninstallEntry(const InstallPaths& paths) {
     SetString(key, L"Publisher", L"KrakznCam");
     SetString(key, L"DisplayIcon", exe + L",0");
     SetString(key, L"InstallLocation", paths.installDir);
-    SetString(key, L"UninstallString", L"\"" + paths.installDir + L"\\" + kUninstaller + L"\" --uninstall");
+    std::wstring uninstall = L"\"" + paths.installDir + L"\\" + kUninstaller + L"\" --uninstall";
+    if (paths.test) uninstall += L" --test-root \"" + paths.testRoot + L"\"";
+    SetString(key, L"UninstallString", uninstall);
     SetString(key, L"URLInfoAbout", L"https://github.com/Kr3akz/Krakzn-Cam");
     SetDword(key, L"NoModify", 1);
     SetDword(key, L"NoRepair", 1);
@@ -268,6 +270,7 @@ InstallPaths MakePaths(const std::wstring& testRoot) {
     InstallPaths paths;
     if (!testRoot.empty()) {
         paths.test = true;
+        paths.testRoot = testRoot;
         paths.installDir = testRoot + L"\\Programs\\KrakznCam";
         paths.startMenu = testRoot + L"\\Startmenue\\KrakznCam.lnk";
         paths.desktop = testRoot + L"\\Desktop\\KrakznCam.lnk";

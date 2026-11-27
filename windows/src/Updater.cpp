@@ -155,7 +155,8 @@ void Updater::Run() {
             }
             // Nicht neu prüfen, während ein Update bereitliegt oder lädt.
             if (state != State::Downloading && state != State::Ready) Check();
-            wait = 6 * 60 * 60 * 1000;
+            // Release ohne Setup: GitHub baut es vermutlich gerade, also bald nochmal schauen.
+            wait = m_retrySoon.exchange(false) ? 15 * 60 * 1000 : 6 * 60 * 60 * 1000;
         }
     }
 }
@@ -194,7 +195,8 @@ void Updater::Check() {
         }
     }
     if (!setup) {
-        LogLine("Release %s hat kein %s, wird ignoriert", tag.c_str(), kSetupAssetName);
+        LogLine("Release %s hat noch kein %s, prüfe in 15 Minuten erneut", tag.c_str(), kSetupAssetName);
+        m_retrySoon = true;
         SetState(State::UpToDate);
         return;
     }

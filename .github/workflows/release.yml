@@ -1,0 +1,114 @@
+# Baut zu jedem veröffentlichten Release das Setup und die iPhone-App und hängt beides ans Release.
+#
+# So veröffentlichst du ein Update:
+#   GitHub → Releases → „Draft a new release“ → „Choose a tag“: neuen Tag wie v0.2.0 eintippen
+#   (immer höher als der letzte) → Titel und Notizen → „Publish release“.
+# Nach ein paar Minuten hängen KrakznCam-Setup.exe und KrakznCam.ipa am Release. KrakznCam bei
+# deinem Freund findet das Update dann von selbst (beim Start und alle 6 Stunden).
+name: Release bauen
+
+on:
+  release:
+    types: [published]
+
+permissions:
+  contents: write  # Dateien ans Release hängen
+
+jobs:
+  version:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - name: Version aus dem Tag lesen
+        id: version
+        env:
+          TAG: ${{ github.event.release.tag_name }}
+        run: |
+          VERSION="${TAG#v}"
+          VERSION="${VERSION#V}"
+          if ! [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::error::Der Tag muss wie v0.2.0 aussehen (gefunden: $TAG)."
+            exit 1
+          fi
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "Version: $VERSION"
+
+  ios:
+    needs: version
+    runs-on: macos-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: XcodeGen installieren
+        run: brew install xcodegen
+
+      - name: Xcode-Projekt erzeugen
+        working-directory: ios
+        run: xcodegen generate
+
+      - name: App bauen (unsigniert)
+        working-directory: ios
+        env:
+          VERSION: ${{ needs.version.outputs.version }}
+        run: |
+          set -o pipefail
+          xcodebuild \
+            -quiet \
+            -project KrakznCam.xcodeproj \
+            -scheme KrakznCam \
+            -configuration Release \
+            -sdk iphoneos \
+            -destination 'generic/platform=iOS' \
+            -derivedDataPath build \
+            MARKETING_VERSION="$VERSION" \
+            CURRENT_PROJECT_VERSION="${{ github.run_number }}" \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY="" \
+            build
+
+      - name: IPA verpacken
+        working-directory: ios
+        run: |
+          mkdir -p Payload
+          cp -R build/Build/Products/Release-iphoneos/KrakznCam.app Payload/
+          zip -qry KrakznCam.ipa Payload
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release-ipa
+          path: ios/KrakznCam.ipa
+          if-no-files-found: error
+
+  windows:
+    needs: [version, ios]
+    runs-on: windows-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: release-ipa
+          path: ipa
+
+      - name: Konfigurieren
+        shell: pwsh
+        run: cmake -S windows -B build -A x64 "-DKRAKZNCAM_RELEASE_VERSION=${{ needs.version.outputs.version }}" "-DKRAKZNCAM_IPA=$PWD/ipa/KrakznCam.ipa"
+
+      - name: Setup bauen
+        run: cmake --build build --config Release --parallel --target krakzncam_setup
+
+      - name: Ans Release hängen
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.event.release.tag_name }}
+        run: |
+          New-Item -ItemType Directory -Force upload | Out-Null
+          Copy-Item build/Release/KrakznCam-Setup.exe upload/
+          Copy-Item ipa/KrakznCam.ipa upload/
+          Get-ChildItem upload | Format-Table Name, Length
+          gh release upload $env:TAG upload/KrakznCam-Setup.exe upload/KrakznCam.ipa --clobber --repo "${{ github.repository }}"

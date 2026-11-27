@@ -59,6 +59,7 @@ private:
     std::thread m_thread;
     std::atomic<bool> m_checkRequested{false};
     std::atomic<bool> m_downloadRequested{false};
+    std::atomic<bool> m_retrySoon{false};
 
     std::mutex m_mutex;
     Status m_status;

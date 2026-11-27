@@ -1,7 +1,10 @@
 cmake_minimum_required(VERSION 3.24)
 # Version: beim Release aus dem Tag (z. B. v0.2.0 -> -DKRAKZNCAM_RELEASE_VERSION=0.2.0), sonst Entwicklungsstand.
 set(KRAKZNCAM_RELEASE_VERSION "" CACHE STRING "Version aus dem Release-Tag, z. B. 0.2.0")
-if(KRAKZNCAM_RELEASE_VERSION)
+if(NOT KRAKZNCAM_RELEASE_VERSION STREQUAL "")
+    if(NOT KRAKZNCAM_RELEASE_VERSION MATCHES "^[0-9]+\\.[0-9]+\\.[0-9]+$")
+        message(FATAL_ERROR "KRAKZNCAM_RELEASE_VERSION muss wie 0.2.0 aussehen, ist aber '${KRAKZNCAM_RELEASE_VERSION}'")
+    endif()
     set(KRAKZNCAM_PROJECT_VERSION ${KRAKZNCAM_RELEASE_VERSION})
 else()
     set(KRAKZNCAM_PROJECT_VERSION 0.1.0)

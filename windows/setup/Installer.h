@@ -21,6 +21,7 @@ struct InstallPaths {
     std::wstring uninstallKey;  // unter HKEY_CURRENT_USER
     std::wstring dataDir;       // %LOCALAPPDATA%\KrakznCam (Protokolle, Einstellungen)
     bool test = false;          // Testordner: keine Kamera, kein Aufräumen bei Sideloadly
+    std::wstring testRoot;
 };
 
 // testRoot leer = echte Orte. Sonst landet alles in diesem Ordner (zum Ausprobieren).
