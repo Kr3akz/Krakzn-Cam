@@ -7,13 +7,15 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
 
 add_compile_options(/utf-8 /permissive- /EHsc /W4 /MP)
-add_compile_definitions(UNICODE _UNICODE WIN32_LEAN_AND_MEAN NOMINMAX KABELCAM_VERSION="${PROJECT_VERSION}")
+add_compile_definitions(UNICODE _UNICODE WIN32_LEAN_AND_MEAN NOMINMAX IMGUI_DEFINE_MATH_OPERATORS
+    KABELCAM_VERSION="${PROJECT_VERSION}")
 
 # Dear ImGui für die Oberfläche (klein, schnell, ohne Laufzeit-Abhängigkeiten).
+# 1.92 rendert Schrift in jeder Größe scharf – wichtig für die großen, dünnen Titel.
 include(FetchContent)
 FetchContent_Declare(imgui
     GIT_REPOSITORY https://github.com/ocornut/imgui.git
-    GIT_TAG v1.91.5
+    GIT_TAG v1.92.9b
     GIT_SHALLOW TRUE)
 FetchContent_MakeAvailable(imgui)
 
@@ -44,7 +46,7 @@ target_include_directories(kabelcam_core PUBLIC src)
 target_link_libraries(kabelcam_core PUBLIC
     ws2_32 d3d11 dxgi mfplat mfuuid wmcodecdspuuid windowscodecs ole32 shell32 advapi32)
 
-add_executable(kabelcam WIN32 src/main.cpp src/App.cpp)
+add_executable(kabelcam WIN32 src/main.cpp src/App.cpp src/Theme.cpp)
 target_link_libraries(kabelcam PRIVATE kabelcam_core imgui d3dcompiler dwmapi)
 
 add_executable(kabelcam_fakephone tools/fakephone.cpp)

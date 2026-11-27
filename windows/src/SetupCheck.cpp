@@ -188,6 +188,7 @@ SetupReport RunSetupCheck() {
     report.windowsBuild = WindowsBuild();
     {
         SetupItem item;
+        item.key = "windows";
         item.title = "Windows";
         if (report.windowsBuild >= 22000) {
             item.status = SetupItem::Status::Ok;
@@ -205,6 +206,7 @@ SetupReport RunSetupCheck() {
     bool iTunesOk = false;
     {
         SetupItem item;
+        item.key = "itunes";
         item.title = "iTunes (Web-Version)";
         if (iTunes) {
             item.status = SetupItem::Status::Ok;
@@ -233,6 +235,7 @@ SetupReport RunSetupCheck() {
     bool iCloudOk = false;
     {
         SetupItem item;
+        item.key = "icloud";
         item.title = "iCloud (Web-Version)";
         if (iCloud) {
             item.status = SetupItem::Status::Ok;
@@ -256,6 +259,7 @@ SetupReport RunSetupCheck() {
     // USB-Treiber und Dienst (kommen mit iTunes).
     {
         SetupItem item;
+        item.key = "usb";
         item.title = "Apple-USB-Dienst";
         switch (QueryServiceState(L"Apple Mobile Device Service")) {
         case ServiceState::Running:
@@ -280,6 +284,7 @@ SetupReport RunSetupCheck() {
     const InstalledApp* sideloadly = FindApp(apps, [](const std::wstring& n) { return Contains(n, L"Sideloadly"); });
     {
         SetupItem item;
+        item.key = "sideloadly";
         item.title = "Sideloadly";
         if (sideloadly) {
             item.status = SetupItem::Status::Ok;
@@ -301,6 +306,7 @@ SetupReport RunSetupCheck() {
     // Apple-Geräte-App aus dem Store: kann sich mit iTunes in die Quere kommen.
     if (HasPackage(packages, L"AppleInc.AppleDevices_")) {
         SetupItem item;
+        item.key = "appledevices";
         item.status = SetupItem::Status::Info;
         item.title = "„Apple Geräte“-App";
         item.detail = "Aus dem Microsoft Store installiert. Falls Sideloadly das iPhone nicht findet, diese App "

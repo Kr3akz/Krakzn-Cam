@@ -7,6 +7,7 @@
 struct SetupItem {
     enum class Status { Ok, Missing, Warning, Info };
     Status status = Status::Ok;
+    std::string key;  // windows, itunes, icloud, usb, sideloadly, appledevices
     std::string title;
     std::string detail;
     std::string actionLabel;    // leer = kein Knopf

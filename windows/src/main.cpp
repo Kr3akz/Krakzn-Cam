@@ -15,6 +15,7 @@
 #include "Snapshot.h"
 #include "StreamClient.h"
 #include "TextUtil.h"
+#include "Theme.h"
 
 #include "imgui.h"
 #include "imgui_impl_dx11.h"
@@ -22,6 +23,7 @@
 
 #include <windows.h>
 #include <d3d11_4.h>
+#include <dwmapi.h>
 #include <dxgi1_2.h>
 #include <mfapi.h>
 #include <shellapi.h>
@@ -43,7 +45,9 @@ struct Options {
     std::wstring logPath;
     bool check = false;
     bool selftest = false;
-    int frames = 60;
+    int frames = 60;        // Selbsttest: so viele Bilder abwarten (0 = nur Zeit ablaufen lassen)
+    double timeout = 30.0;  // Selbsttest: höchstens so viele Sekunden
+    App::Page page = App::Page::Camera;
     std::wstring snapshotPath;
     std::wstring screenshotPath;
 };
@@ -58,7 +62,7 @@ struct Graphics {
 Graphics g_gfx;
 App* g_app = nullptr;
 bool g_minimized = false;
-const float kClearColor[4] = {0.105f, 0.11f, 0.125f, 1.0f};
+const float kClearColor[4] = {11.0f / 255.0f, 11.0f / 255.0f, 13.0f / 255.0f, 1.0f};
 
 Options ParseOptions() {
     Options options;
@@ -82,6 +86,10 @@ Options ParseOptions() {
             options.selftest = true;
         } else if (arg == L"--frames") {
             options.frames = _wtoi(next().c_str());
+        } else if (arg == L"--timeout") {
+            options.timeout = _wtof(next().c_str());
+        } else if (arg == L"--page") {
+            options.page = next() == L"setup" ? App::Page::Setup : App::Page::Camera;
         } else if (arg == L"--snapshot") {
             options.snapshotPath = next();
         } else if (arg == L"--screenshot") {
@@ -189,69 +197,31 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
     return DefWindowProcW(hwnd, msg, wParam, lParam);
 }
 
-std::string FontPath(const char* file) {
-    char windows[MAX_PATH];
-    UINT length = GetWindowsDirectoryA(windows, MAX_PATH);
-    std::string path = length ? std::string(windows, length) : std::string("C:\\Windows");
-    return path + "\\Fonts\\" + file;
-}
-
-bool FileExists(const std::string& path) {
-    return GetFileAttributesA(path.c_str()) != INVALID_FILE_ATTRIBUTES;
-}
-
-AppFonts SetupImGui(HWND hwnd, float scale) {
+void SetupImGui(HWND hwnd, float scale) {
     IMGUI_CHECKVERSION();
     ImGui::CreateContext();
-    ImGuiIO& io = ImGui::GetIO();
-    io.IniFilename = nullptr;
-
+    ImGui::GetIO().IniFilename = nullptr;
     ImGui::StyleColorsDark();
     ImGuiStyle& style = ImGui::GetStyle();
-    style.WindowRounding = 0.0f;
-    style.ChildRounding = 0.0f;
-    style.FrameRounding = 6.0f;
-    style.GrabRounding = 6.0f;
-    style.FramePadding = ImVec2(12.0f, 6.0f);
-    style.ItemSpacing = ImVec2(8.0f, 7.0f);
-    style.SeparatorTextBorderSize = 1.0f;
-    style.SeparatorTextPadding = ImVec2(0.0f, 4.0f);
-    ImVec4* colors = style.Colors;
-    colors[ImGuiCol_WindowBg] = ImVec4(0.105f, 0.11f, 0.125f, 1.0f);
-    colors[ImGuiCol_ChildBg] = ImVec4(0.105f, 0.11f, 0.125f, 1.0f);
-    colors[ImGuiCol_Text] = ImVec4(0.93f, 0.94f, 0.96f, 1.0f);
-    colors[ImGuiCol_Separator] = ImVec4(0.25f, 0.27f, 0.31f, 1.0f);
-    colors[ImGuiCol_Button] = ImVec4(0.21f, 0.33f, 0.56f, 1.0f);
-    colors[ImGuiCol_ButtonHovered] = ImVec4(0.27f, 0.41f, 0.68f, 1.0f);
-    colors[ImGuiCol_ButtonActive] = ImVec4(0.18f, 0.28f, 0.48f, 1.0f);
-    style.ScaleAllSizes(scale);
+    style.WindowPadding = ImVec2(0.0f, 0.0f);
+    style.WindowBorderSize = 0.0f;
+    style.ChildBorderSize = 0.0f;
 
-    // Segoe UI mit deutschen Umlauten und typografischen Zeichen; Häkchen aus Segoe UI Symbol.
-    static const ImWchar textRanges[] = {0x0020, 0x00FF, 0x2010, 0x2027, 0x2190, 0x2193, 0};
-    static const ImWchar symbolRanges[] = {0x2713, 0x2717, 0x25CF, 0x25CF, 0};
-    AppFonts fonts;
-    const float size = 16.5f * scale;
-    const std::string regular = FontPath("segoeui.ttf");
-    const std::string bold = FontPath("segoeuib.ttf");
-    const std::string symbols = FontPath("seguisym.ttf");
-    if (FileExists(regular)) {
-        fonts.regular = io.Fonts->AddFontFromFileTTF(regular.c_str(), size, nullptr, textRanges);
-        if (FileExists(symbols)) {
-            ImFontConfig merge;
-            merge.MergeMode = true;
-            io.Fonts->AddFontFromFileTTF(symbols.c_str(), size, &merge, symbolRanges);
-        }
-    } else {
-        fonts.regular = io.Fonts->AddFontDefault();
-    }
-    if (FileExists(bold)) {
-        fonts.bold = io.Fonts->AddFontFromFileTTF(bold.c_str(), size, nullptr, textRanges);
-        fonts.title = io.Fonts->AddFontFromFileTTF(bold.c_str(), size * 1.55f, nullptr, textRanges);
-    }
-
+    // Alles Sichtbare zeichnet Theme selbst; ImGui liefert Fenster, Eingabe und Schrift.
+    Theme::SetScale(scale);
+    Theme::LoadFonts();
     ImGui_ImplWin32_Init(hwnd);
     ImGui_ImplDX11_Init(g_gfx.device.Get(), g_gfx.context.Get());
-    return fonts;
+}
+
+// Dunkle Titelleiste in der Farbe des Hintergrunds (Windows 11; ältere Versionen ignorieren das).
+void StyleTitleBar(HWND hwnd) {
+    const BOOL dark = TRUE;
+    DwmSetWindowAttribute(hwnd, 20 /* DWMWA_USE_IMMERSIVE_DARK_MODE */, &dark, sizeof(dark));
+    const COLORREF caption = RGB(22, 22, 25);
+    const COLORREF text = RGB(244, 244, 246);
+    DwmSetWindowAttribute(hwnd, 35 /* DWMWA_CAPTION_COLOR */, &caption, sizeof(caption));
+    DwmSetWindowAttribute(hwnd, 36 /* DWMWA_TEXT_COLOR */, &text, sizeof(text));
 }
 
 void RenderFrame(App& app) {
@@ -271,7 +241,7 @@ int RunLoop(App& app, HANDLE frameEvent) {
     int extraFrames = 2;
     bool running = true;
     while (running) {
-        DWORD timeout = extraFrames > 0 ? 0 : 250;
+        DWORD timeout = extraFrames > 0 || app.Animating() ? 0 : 250;
         MsgWaitForMultipleObjectsEx(1, &frameEvent, timeout, QS_ALLINPUT, MWMO_INPUTAVAILABLE);
         MSG msg;
         while (PeekMessageW(&msg, nullptr, 0, 0, PM_REMOVE)) {
@@ -295,8 +265,8 @@ int RunLoop(App& app, HANDLE frameEvent) {
 
 int RunSelftest(App& app, StreamClient& client, HANDLE frameEvent, const Options& options) {
     using Clock = std::chrono::steady_clock;
-    const auto deadline = Clock::now() + std::chrono::seconds(30);
-    bool success = false;
+    const auto deadline = Clock::now() + std::chrono::milliseconds(static_cast<int>(options.timeout * 1000.0));
+    bool success = options.frames <= 0;  // ohne Bildziel: nur die Zeit ablaufen lassen
     while (Clock::now() < deadline) {
         WaitForSingleObject(frameEvent, 100);
         MSG msg;
@@ -307,12 +277,14 @@ int RunSelftest(App& app, StreamClient& client, HANDLE frameEvent, const Options
         app.UpdateVideo();
         RenderFrame(app);
         g_gfx.swapChain->Present(0, 0);
-        if (static_cast<int>(client.Status().framesDecoded) >= options.frames && app.Video().HasFrame()) {
+        if (options.frames > 0 && static_cast<int>(client.Status().framesDecoded) >= options.frames &&
+            app.Video().HasFrame()) {
             success = true;
             break;
         }
     }
-    for (int i = 0; i < 3; ++i) {  // Layout zur Ruhe kommen lassen
+    for (int i = 0; i < 40; ++i) {  // Animationen auslaufen lassen (Seite einblenden, Hintergrund)
+        Sleep(16);
         app.UpdateVideo();
         RenderFrame(app);
         g_gfx.swapChain->Present(0, 0);
@@ -372,6 +344,7 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand) {
     windowClass.lpfnWndProc = WndProc;
     windowClass.hInstance = instance;
     windowClass.hCursor = LoadCursorW(nullptr, IDC_ARROW);
+    windowClass.hbrBackground = CreateSolidBrush(RGB(11, 11, 13));  // kein weißes Aufblitzen beim Vergrößern
     windowClass.lpszClassName = L"KabelCamWindow";
     RegisterClassExW(&windowClass);
 
@@ -386,7 +359,8 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand) {
         MessageBoxW(nullptr, L"Das Fenster konnte nicht erstellt werden.", L"KabelCam", MB_ICONERROR);
         return 1;
     }
-    const AppFonts fonts = SetupImGui(hwnd, scale);
+    StyleTitleBar(hwnd);
+    SetupImGui(hwnd, scale);
 
     int exitCode = 0;
     {
@@ -394,7 +368,7 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand) {
         HANDLE frameEvent = CreateEventW(nullptr, FALSE, FALSE, nullptr);
         StreamClient client(g_gfx.device.Get(), store, frameEvent);
         client.Start(options.directHost, options.directPort);
-        App app(g_gfx.device.Get(), client, store, fonts, scale);
+        App app(g_gfx.device.Get(), client, store, options.page);
         g_app = &app;
 
         if (options.selftest) {
