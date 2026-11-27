@@ -1,0 +1,24 @@
+# Xcode / XcodeGen (das Projekt wird aus ios/project.yml erzeugt)
+ios/*.xcodeproj/
+ios/build/
+ios/Payload/
+*.ipa
+DerivedData/
+.DS_Store
+
+# Python
+__pycache__/
+*.pyc
+
+# Testaufnahmen
+*.h264
+
+# IDE-Einstellungen
+.idea/
+.vscode/
+
+# Visual Studio / CMake (Windows-Teil)
+.vs/
+out/
+build/
+*.user

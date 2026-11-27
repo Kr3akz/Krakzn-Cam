@@ -1,0 +1,134 @@
+import AVFoundation
+import Combine
+import Foundation
+
+/// Verbindet Kamera → Encoder → Server und hält den Zustand für die Oberfläche.
+/// Alle `@Published`-Werte werden nur auf dem Main-Thread geändert.
+final class AppModel: ObservableObject {
+    @Published private(set) var connection: StreamServer.Status = .starting
+    @Published private(set) var cameraPermission = AVCaptureDevice.authorizationStatus(for: .video)
+    @Published private(set) var cameraError: String?
+    @Published private(set) var thermalState = ProcessInfo.processInfo.thermalState
+    /// Erhöht sich nach jeder Kamera-Umstellung, damit die Vorschau ihre Ausrichtung neu setzt.
+    @Published private(set) var configurationID = 0
+    @Published var settings: StreamSettings {
+        didSet {
+            guard settings != oldValue else { return }
+            settings.save()
+            applySettings()
+        }
+    }
+
+    let availableLenses: [CameraLens]
+    let camera = CameraCapture()
+    private let encoder = H264Encoder()
+    private let server = StreamServer(port: KabelCamProtocol.port)
+    private var started = false
+    private var observers: [NSObjectProtocol] = []
+
+    init() {
+        let lenses = CameraLens.allCases.filter { CameraCapture.device(for: $0) != nil }
+        var loaded = StreamSettings.load()
+        if !lenses.contains(loaded.lens) {
+            loaded.lens = lenses.first ?? .wide
+        }
+        availableLenses = lenses
+        settings = loaded
+
+        let encoder = self.encoder
+        let server = self.server
+
+        camera.onFrame = { sample in
+            // Nur kodieren, wenn wirklich ein PC zuschaut. Das spart viel Energie.
+            guard server.hasClient else { return }
+            encoder.encode(sample)
+        }
+        encoder.onFrame = { annexB, keyframe, ptsMicros in
+            server.sendVideoFrame(ptsMicros: ptsMicros, keyframe: keyframe, annexB: annexB)
+        }
+        server.onClientConnected = {
+            encoder.requestKeyframe()
+        }
+        server.onKeyframeRequest = {
+            encoder.requestKeyframe()
+        }
+        server.onStatus = { [weak self] status in
+            DispatchQueue.main.async { self?.connection = status }
+        }
+
+        observers.append(NotificationCenter.default.addObserver(
+            forName: ProcessInfo.thermalStateDidChangeNotification,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            self?.thermalState = ProcessInfo.processInfo.thermalState
+        })
+    }
+
+    /// Beim ersten Erscheinen: Kamerazugriff erfragen und alles starten.
+    func start() {
+        guard !started else { return }
+        switch AVCaptureDevice.authorizationStatus(for: .video) {
+        case .authorized:
+            startPipeline()
+        case .notDetermined:
+            AVCaptureDevice.requestAccess(for: .video) { granted in
+                DispatchQueue.main.async {
+                    self.cameraPermission = granted ? .authorized : .denied
+                    if granted {
+                        self.startPipeline()
+                    }
+                }
+            }
+        default:
+            cameraPermission = AVCaptureDevice.authorizationStatus(for: .video)
+        }
+    }
+
+    /// App kommt wieder in den Vordergrund.
+    func resume() {
+        if started {
+            camera.start()
+        } else {
+            start()
+        }
+    }
+
+    private func startPipeline() {
+        guard !started else { return }
+        started = true
+        cameraPermission = .authorized
+        server.start()
+        applySettings()
+        camera.start()
+    }
+
+    private func applySettings() {
+        guard started else { return }
+        let current = settings
+        encoder.update(fps: current.fps, bitrate: current.bitrate)
+        camera.configure(lens: current.lens, resolution: current.resolution, fps: current.fps) { [weak self] error in
+            guard let self else { return }
+            self.cameraError = error
+            self.configurationID += 1
+            if error == nil {
+                self.server.setHello(Self.helloInfo(for: current))
+                self.encoder.requestKeyframe()
+            }
+        }
+    }
+
+    private static func helloInfo(for settings: StreamSettings) -> [String: Any] {
+        let size = settings.resolution.size
+        return [
+            "version": KabelCamProtocol.version,
+            "app": "KabelCam",
+            "codec": "h264",
+            "width": Int(size.width),
+            "height": Int(size.height),
+            "fps": settings.fps,
+            "bitrate": settings.bitrate,
+            "lens": settings.lens.rawValue,
+        ]
+    }
+}

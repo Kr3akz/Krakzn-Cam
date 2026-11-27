@@ -1,0 +1,32 @@
+# XcodeGen-Projektbeschreibung. Daraus wird auf dem Mac in der Cloud das Xcode-Projekt erzeugt:
+#   xcodegen generate
+name: KabelCam
+options:
+  bundleIdPrefix: de.kabelcam
+  deploymentTarget:
+    iOS: "16.0"
+settings:
+  base:
+    SWIFT_VERSION: "5.0"
+    MARKETING_VERSION: "0.1.0"
+    CURRENT_PROJECT_VERSION: "1"
+targets:
+  KabelCam:
+    type: application
+    platform: iOS
+    sources:
+      - path: KabelCam
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: de.kabelcam.KabelCam
+        INFOPLIST_FILE: Support/Info.plist
+        TARGETED_DEVICE_FAMILY: "1"
+schemes:
+  KabelCam:
+    build:
+      targets:
+        KabelCam: all
+    run:
+      config: Debug
+    archive:
+      config: Release
