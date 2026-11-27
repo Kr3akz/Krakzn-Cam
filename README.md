@@ -135,6 +135,7 @@ Protokolle:
 - `%LOCALAPPDATA%\KrakznCam\einrichtung.log` (Einrichten der virtuellen Kamera, Aufräumen beim Deinstallieren)
 - `%TEMP%\KrakznCam-Setup.log` (Setup)
 - `C:\ProgramData\KrakznCam\vcam.log` (virtuelle Kamera im Windows-Kameradienst)
+- `C:\ProgramData\KrakznCam\kamera-direkt.log` (Kamera empfängt selbst, wenn KrakznCam geschlossen ist)
 
 ## Verbindung testen (Python)
 
