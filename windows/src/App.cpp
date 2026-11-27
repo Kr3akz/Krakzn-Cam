@@ -316,6 +316,8 @@ void App::Draw() {
     const bool live = status.state == StreamStatus::State::Streaming && m_video.HasFrame();
 
     m_cameraStatus = m_camera.GetStatus();
+    if (status.state != StreamStatus::State::Streaming) m_streamingSince = {};
+    else if (m_streamingSince == Clock::time_point{}) m_streamingSince = Clock::now();
     m_cam = m_client.CameraState();
     if (m_cam.empty()) {
         m_local.clear();
@@ -515,9 +517,22 @@ float App::DrawNotes(ImDrawList* dl, ImVec2 pos, float width, const StreamStatus
         any = true;
     };
 
-    // Signatur läuft ab, oder auf dem PC fehlt noch etwas.
+    // Bild kommt, aber kein Kamera-Zustand: Auf dem iPhone läuft eine App ohne Einstellungen vom PC.
     bool showSideloadly = false;
     bool showSetup = false;
+    bool showPackage = false;
+    const bool appOutdated = live && m_cam.empty() && m_streamingSince != Clock::time_point{} &&
+                             Clock::now() - m_streamingSince > std::chrono::seconds(5);
+    if (appOutdated) {
+        next();
+        y += WarnNote(dl, ImVec2(pos.x, y), width,
+                      "Die App auf dem iPhone ist veraltet, deshalb fehlen die Kamera-Einstellungen. Spiele die neue "
+                      "KrakznCam.ipa mit Sideloadly auf und wähle dabei die Datei neu aus.");
+        showSideloadly = !m_setup.sideloadlyExe.empty();
+        showPackage = !m_setup.appPackage.empty();
+    }
+
+    // Signatur läuft ab, oder auf dem PC fehlt noch etwas.
     if (status.signatureExpires > 0) {
         const int days = CalendarDaysUntil(status.signatureExpires);
         const bool expired = status.signatureExpires < static_cast<int64_t>(time(nullptr));
@@ -549,7 +564,7 @@ float App::DrawNotes(ImDrawList* dl, ImVec2 pos, float width, const StreamStatus
         showSetup = true;
     }
 
-    if (showSideloadly || showSetup) {
+    if (showSideloadly || showSetup || showPackage) {
         next();
         y += Px(4.0f);
         float x = pos.x;
@@ -557,6 +572,13 @@ float App::DrawNotes(ImDrawList* dl, ImVec2 pos, float width, const StreamStatus
             const float buttonWidth = ButtonWidth("Sideloadly öffnen", Icon::OpenExternal, ButtonSize::Normal);
             if (Button("##hero_sideloadly", "Sideloadly öffnen", Icon::OpenExternal, ImVec2(x, y))) {
                 OpenTarget(m_setup.sideloadlyExe);
+            }
+            x += buttonWidth + Px(12.0f);
+        }
+        if (showPackage) {
+            const float buttonWidth = ButtonWidth("App-Datei zeigen", Icon::Folder, ButtonSize::Normal);
+            if (Button("##hero_package", "App-Datei zeigen", Icon::Folder, ImVec2(x, y))) {
+                RevealInExplorer(m_setup.appPackage);
             }
             x += buttonWidth + Px(12.0f);
         }

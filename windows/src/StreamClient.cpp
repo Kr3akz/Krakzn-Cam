@@ -209,8 +209,11 @@ void StreamClient::Serve(SOCKET s) {
             std::string_view json(reinterpret_cast<const char*>(payload.data()), payload.size());
             if (ParseJsonObject(json, state)) {
                 std::lock_guard lock(m_mutex);
+                if (m_cameraState.empty()) LogLine("Kamera-Zustand vom iPhone: %zu Werte", state.size());
                 m_cameraState = std::move(state);
                 ++m_stateVersion;
+            } else {
+                LogLine("Kamera-Zustand nicht lesbar: %.200s", std::string(json).c_str());
             }
         } else if (type == KrakznCam::kMsgVideoFrame && payload.size() > 9) {
             int64_t pts = static_cast<int64_t>(KrakznCam::ReadBE64(payload.data()));

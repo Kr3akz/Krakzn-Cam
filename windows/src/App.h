@@ -89,6 +89,7 @@ private:
     Page m_page;
     std::chrono::steady_clock::time_point m_lastCheck;
     std::chrono::steady_clock::time_point m_pageShown;
+    std::chrono::steady_clock::time_point m_streamingSince;  // leer, solange kein Bild kommt
     bool m_animating = false;
     float m_dpiScale = 1.0f;
     // Höhen vom letzten Bild: zum vertikalen Zentrieren und für gleich hohe Karten.

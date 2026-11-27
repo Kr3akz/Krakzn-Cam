@@ -3,7 +3,7 @@
 // und sendet es auf 127.0.0.1.
 //
 //   krakzncam_fakephone.exe [--port 17878] [--width 1920] [--height 1080] [--fps 30]
-//                          [--bitrate 12000000] [--seconds 0]
+//                          [--bitrate 12000000] [--seconds 0] [--no-state 1]
 //
 // Danach: krakzncam.exe --direct 127.0.0.1:17878
 
@@ -50,6 +50,7 @@ struct Options {
     UINT fps = 30;
     UINT bitrate = 12'000'000;
     double seconds = 0;  // 0 = unbegrenzt
+    bool noState = false;  // --no-state: wie eine alte App ohne Kamera-Zustand
 };
 
 struct EncodedFrame {
@@ -413,7 +414,7 @@ void ServeClient(SOCKET client, const Options& options) {
         std::string json;
         while (connected) {
             camera.Tick(std::chrono::duration<double>(std::chrono::steady_clock::now() - start).count());
-            if (camera.TakeState(json)) {
+            if (!options.noState && camera.TakeState(json)) {
                 std::vector<uint8_t> statePayload(json.begin(), json.end());
                 if (!SendMessageTo(client, KrakznCam::kMsgState, statePayload)) break;
             }
@@ -486,6 +487,7 @@ int wmain(int argc, wchar_t** argv) {
         else if (key == L"--fps") options.fps = static_cast<UINT>(_wtoi(value));
         else if (key == L"--bitrate") options.bitrate = static_cast<UINT>(_wtoi(value));
         else if (key == L"--seconds") options.seconds = _wtof(value);
+        else if (key == L"--no-state") options.noState = _wtoi(value) != 0;
     }
     if (options.fps == 0) options.fps = 30;
 
