@@ -4,6 +4,7 @@
 #include "SetupCheck.h"
 #include "StreamClient.h"
 #include "VideoView.h"
+#include "VirtualCamera.h"
 
 #include "imgui.h"
 
@@ -19,8 +20,8 @@ public:
 
     // dpiScale: Skalierung des Bildschirms (1,0 = 100 %). Die Oberfläche wächst zusätzlich mit dem Fenster.
     // selftest: nichts an Windows oder Sideloadly verändern.
-    App(ID3D11Device* device, StreamClient& client, FrameStore& store, Page initialPage, float dpiScale,
-        bool selftest);
+    App(ID3D11Device* device, StreamClient& client, FrameStore& store, VirtualCamera& camera, Page initialPage,
+        float dpiScale, bool selftest);
 
     // Fenster wurde aktiviert: Einrichtung neu prüfen (z. B. nach einer Installation).
     void OnActivated();
@@ -54,6 +55,8 @@ private:
     // Zeichnen jeweils eine Karte und geben die Höhe ihres Inhalts zurück.
     float DrawSetupList(ImDrawList* dl, ImVec2 pos, float width, float minHeight);
     float DrawSideloadGuide(ImDrawList* dl, ImVec2 pos, float width, float minHeight);
+    // Zeile „Virtuelle Kamera“ in der Einrichtungsliste. Gibt ihre Höhe zurück.
+    float DrawCameraRow(ImDrawList* dl, float listLeft, float listRight, float textX, float y, bool separator);
 
     // Kamera-Zustand: eigene Änderungen gelten kurz vor dem gemeldeten Wert, bis das iPhone nachzieht.
     const JsonValue* CamValue(const std::string& key) const;
@@ -78,6 +81,8 @@ private:
 
     StreamClient& m_client;
     FrameStore& m_store;
+    VirtualCamera& m_camera;
+    VirtualCamera::Status m_cameraStatus;  // je Bild einmal abgefragt
     VideoView m_video;
     SetupReport m_setup;
     AutoRenew m_renew;

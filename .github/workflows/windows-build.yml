@@ -1,5 +1,6 @@
 # Baut das Windows-Programm in der Cloud. Niemand muss dafür Visual Studio installieren.
-# Ergebnis: Artefakt "KrakznCam-Windows" mit krakzncam.exe und der Testquelle krakzncam_fakephone.exe.
+# Ergebnis: Artefakt "KrakznCam-Windows" mit krakzncam.exe, der virtuellen Kamera krakzncam_vcam.dll
+# und den Prüfwerkzeugen (Testquelle, Kamera-Test).
 name: Windows-Programm bauen
 
 on:

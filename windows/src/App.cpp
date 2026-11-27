@@ -261,10 +261,11 @@ float NoteRow(ImDrawList* dl, ImVec2 pos, float width, std::string_view text) {
 
 }  // namespace
 
-App::App(ID3D11Device* device, StreamClient& client, FrameStore& store, Page initialPage, float dpiScale,
-         bool selftest)
+App::App(ID3D11Device* device, StreamClient& client, FrameStore& store, VirtualCamera& camera, Page initialPage,
+         float dpiScale, bool selftest)
     : m_client(client),
       m_store(store),
+      m_camera(camera),
       m_renew(!selftest),
       m_page(initialPage),
       m_pageShown(Clock::now()),
@@ -314,6 +315,7 @@ void App::Draw() {
     m_renew.Update(status.direct ? 0 : status.signatureExpires, m_setup);
     const bool live = status.state == StreamStatus::State::Streaming && m_video.HasFrame();
 
+    m_cameraStatus = m_camera.GetStatus();
     m_cam = m_client.CameraState();
     if (m_cam.empty()) {
         m_local.clear();
@@ -390,7 +392,7 @@ void App::DrawHeader(const StreamStatus& status, ImVec2 size) {
     }
     x += width + Px(4.0f);
     if (Tab("##tab_setup", "Einrichtung", ImVec2(x, centerY - tabHeight * 0.5f), m_page == Page::Setup,
-            OpenSetupItems() > 0, width)) {
+            OpenSetupItems() > 0 || m_cameraStatus.state == VirtualCamera::State::NotInstalled, width)) {
         ShowPage(Page::Setup);
     }
 
@@ -796,20 +798,26 @@ float App::DrawInfoStrip(ImDrawList* dl, ImVec2 pos, float width, const StreamSt
     }
     y += title.y + Px(10.0f);
 
-    // Format und Objektiv als Chips.
-    std::vector<std::string> chips;
-    if (status.width > 0) chips.push_back(std::to_string(status.width) + " × " + std::to_string(status.height));
-    if (status.fps > 0) chips.push_back(std::to_string(status.fps) + " FPS");
-    if (!status.lens.empty()) chips.push_back(LensLabel(status.lens));
-    chips.push_back("H.264");
+    // Format und Objektiv als Chips, dazu die virtuelle Kamera, solange ein Programm sie benutzt.
+    struct ChipInfo {
+        std::string label;
+        Tone tone = Tone::Neutral;
+        bool dot = false;
+    };
+    std::vector<ChipInfo> chips;
+    if (status.width > 0) chips.push_back({std::to_string(status.width) + " × " + std::to_string(status.height)});
+    if (status.fps > 0) chips.push_back({std::to_string(status.fps) + " FPS"});
+    if (!status.lens.empty()) chips.push_back({LensLabel(status.lens)});
+    chips.push_back({"H.264"});
+    if (m_cameraStatus.state == VirtualCamera::State::InUse) chips.push_back({"Virtuelle Kamera aktiv", Tone::Ok, true});
     float chipX = pos.x;
-    for (const std::string& chip : chips) {
-        const float chipWidth = ChipWidth(chip, false);
+    for (const ChipInfo& chip : chips) {
+        const float chipWidth = ChipWidth(chip.label, chip.dot);
         if (chipX > pos.x && chipX + chipWidth > pos.x + width) {
             chipX = pos.x;
             y += ChipHeight() + Px(7.0f);
         }
-        chipX += Chip(dl, ImVec2(chipX, y), chip, Tone::Neutral) + Px(7.0f);
+        chipX += Chip(dl, ImVec2(chipX, y), chip.label, chip.tone, chip.dot) + Px(7.0f);
     }
     y += ChipHeight();
 
@@ -1239,6 +1247,93 @@ void App::DrawSetupPage(ImVec2 min, ImVec2 max) {
     ImGui::EndChild();
 }
 
+float App::DrawCameraRow(ImDrawList* dl, float listLeft, float listRight, float textX, float y, bool separator) {
+    using State = VirtualCamera::State;
+    const Fonts& fonts = GetFonts();
+    const float iconBox = Px(44.0f);
+    const float titleSize = Px(17.0f);
+    const float descSize = Px(13.5f);
+    const VirtualCamera::Status& camera = m_cameraStatus;
+
+    std::string detail;
+    std::string buttonLabel;
+    std::string chipLabel;
+    Tone chipTone = Tone::Ok;
+    bool chipDot = false;
+    ImU32 iconColor = kText3;
+    switch (camera.state) {
+    case State::Unsupported: detail = "Gibt es erst ab Windows 11."; break;
+    case State::NotInstalled:
+        detail = "Damit OBS, Discord und Co. KrakznCam als Kamera sehen. Wird einmalig mit Administratorrechten "
+                 "eingerichtet.";
+        buttonLabel = "Einrichten";
+        iconColor = kGold;
+        break;
+    case State::Starting:
+        detail = "Wird bei Windows angemeldet …";
+        chipLabel = "Startet";
+        chipTone = Tone::Neutral;
+        iconColor = kText2;
+        break;
+    case State::Ready:
+        detail = "In OBS als Videoaufnahmegerät „KrakznCam“ wählbar, solange KrakznCam läuft.";
+        chipLabel = "Bereit";
+        iconColor = kGreen;
+        break;
+    case State::InUse:
+        detail = "Wird gerade benutzt: " + std::to_string(camera.width) + " × " + std::to_string(camera.height) + ", " +
+                 std::to_string(camera.fps) + " FPS.";
+        chipLabel = "Aktiv";
+        chipDot = true;
+        iconColor = kGreen;
+        break;
+    case State::Failed:
+        detail = camera.detail;
+        buttonLabel = "Erneut einrichten";
+        iconColor = kRed;
+        break;
+    }
+    if (camera.updateAvailable && (camera.state == State::Ready || camera.state == State::InUse)) {
+        detail += " Eine neuere Fassung liegt bereit.";
+        buttonLabel = "Aktualisieren";
+    }
+    if (!camera.installError.empty()) detail = camera.installError;
+    if (camera.installing) {
+        buttonLabel.clear();
+        chipLabel = "Wird eingerichtet …";
+        chipTone = Tone::Neutral;
+        chipDot = false;
+    }
+
+    const float trailing = !buttonLabel.empty() ? ButtonWidth(buttonLabel, Icon::Settings, ButtonSize::Small)
+                           : !chipLabel.empty() ? ChipWidth(chipLabel, chipDot)
+                                                : 0.0f;
+    const float textWidth = listRight - Px(12.0f) - textX - (trailing > 0.0f ? trailing + Px(16.0f) : 0.0f);
+    const char* title = "Virtuelle Kamera";
+    const float content =
+        Measure(fonts.light, titleSize, title).y + Px(3.0f) + Measure(fonts.regular, descSize, detail, textWidth).y;
+    const float height = std::max(iconBox, content) + Px(13.0f) * 2.0f;
+    if (separator) {
+        dl->AddRectFilled(ImVec2(listLeft + Px(12.0f), y), ImVec2(listRight - Px(12.0f), y + 1.0f), A(White(0.07f)));
+    }
+    const ImVec2 iconMin(listLeft + Px(12.0f), y + (height - iconBox) * 0.5f);
+    dl->AddRectFilled(iconMin, iconMin + ImVec2(iconBox, iconBox), A(IM_COL32(0, 0, 0, 90)), Px(7.0f));
+    DrawIcon(dl, Icon::Video, iconMin + ImVec2(iconBox, iconBox) * 0.5f, Px(19.0f), iconColor);
+    float textY = y + (height - content) * 0.5f;
+    textY += Text(dl, fonts.light, titleSize, ImVec2(textX, textY), kText, title) + Px(3.0f);
+    Text(dl, fonts.regular, descSize, ImVec2(textX, textY), camera.installError.empty() ? kText3 : kGold, detail,
+         textWidth);
+
+    const float rowCenter = y + height * 0.5f;
+    if (!buttonLabel.empty()) {
+        const ImVec2 buttonPos(listRight - Px(12.0f) - trailing, rowCenter - ButtonHeight(ButtonSize::Small) * 0.5f);
+        if (Button("##camera_install", buttonLabel, Icon::Settings, buttonPos, ButtonSize::Small)) m_camera.InstallAsync();
+    } else if (!chipLabel.empty()) {
+        Chip(dl, ImVec2(listRight - Px(12.0f) - trailing, rowCenter - ChipHeight() * 0.5f), chipLabel, chipTone, chipDot);
+    }
+    return height;
+}
+
 float App::DrawSetupList(ImDrawList* dl, ImVec2 pos, float width, float minHeight) {
     const Fonts& fonts = GetFonts();
     const ImVec2 padding(Px(28.0f), Px(26.0f));
@@ -1272,7 +1367,9 @@ float App::DrawSetupList(ImDrawList* dl, ImVec2 pos, float width, float minHeigh
     float y = pos.y + padding.y;
     const float titleHeight = Measure(fonts.light, Px(28.0f), "Einrichtung").y;
     Text(dl, fonts.light, Px(28.0f), ImVec2(pos.x + padding.x, y), kText, "Einrichtung");
-    const int open = OpenSetupItems();
+    const bool cameraOpen = m_cameraStatus.state == VirtualCamera::State::NotInstalled ||
+                            m_cameraStatus.state == VirtualCamera::State::Failed;
+    const int open = OpenSetupItems() + (cameraOpen ? 1 : 0);
     const std::string summary =
         open == 0 ? "Alles bereit" : open == 1 ? "1 Punkt offen" : std::to_string(open) + " Punkte offen";
     const float summaryWidth = ChipWidth(summary, true);
@@ -1352,6 +1449,8 @@ float App::DrawSetupList(ImDrawList* dl, ImVec2 pos, float width, float minHeigh
         if (Switch("##autorenew", ImVec2(listRight - Px(12.0f), y + height * 0.5f), value)) m_renew.SetEnabled(value);
         y += height;
     }
+
+    y += DrawCameraRow(dl, listLeft, listRight, textX, y, !items.empty() || !m_setup.sideloadlyExe.empty());
 
     // Fuß: erneut prüfen.
     y += Px(18.0f);

@@ -4,6 +4,8 @@
 //   krakzncam.exe                               normaler Start
 //   krakzncam.exe --direct 127.0.0.1:17878      Testquelle statt iPhone (krakzncam_fakephone.exe)
 //   krakzncam.exe --check --log datei.txt       nur Einrichtung prüfen und ins Protokoll schreiben
+//   krakzncam.exe --install-camera              virtuelle Kamera einrichten (braucht Administratorrechte)
+//   krakzncam.exe --uninstall-camera            virtuelle Kamera wieder entfernen
 //   krakzncam.exe --selftest --frames 60 --snapshot bild.png --screenshot ui.png --log datei.txt
 //                                              unsichtbar laufen, bis N Bilder dekodiert sind, dann speichern
 //                [--click x,y] [--wheel x,y,menge]   danach Mausklicks bzw. Mausrad simulieren (mehrfach möglich)
@@ -17,6 +19,7 @@
 #include "StreamClient.h"
 #include "TextUtil.h"
 #include "Theme.h"
+#include "VirtualCamera.h"
 
 #include "imgui.h"
 #include "imgui_impl_dx11.h"
@@ -48,6 +51,10 @@ struct Options {
     uint16_t directPort = 0;
     std::wstring logPath;
     bool check = false;
+    bool installCamera = false;    // --install-camera: virtuelle Kamera einrichten (Administrator)
+    bool uninstallCamera = false;  // --uninstall-camera: wieder entfernen (Administrator)
+    bool vcam = false;             // Selbsttest: virtuelle Kamera anmelden
+    bool vcamFeed = false;         // Selbsttest: virtuelle Kamera nur mit Bildern versorgen
     bool selftest = false;
     int frames = 60;        // Selbsttest: so viele Bilder abwarten (0 = nur Zeit ablaufen lassen)
     double timeout = 30.0;  // Selbsttest: höchstens so viele Sekunden
@@ -98,6 +105,14 @@ Options ParseOptions() {
             options.logPath = next();
         } else if (arg == L"--check") {
             options.check = true;
+        } else if (arg == L"--install-camera") {
+            options.installCamera = true;
+        } else if (arg == L"--uninstall-camera") {
+            options.uninstallCamera = true;
+        } else if (arg == L"--vcam") {
+            options.vcam = true;
+        } else if (arg == L"--vcam-feed") {
+            options.vcamFeed = true;
         } else if (arg == L"--selftest") {
             options.selftest = true;
         } else if (arg == L"--frames") {
@@ -371,12 +386,26 @@ int RunSelftest(App& app, StreamClient& client, HANDLE frameEvent, const Options
 
 int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand) {
     const Options options = ParseOptions();
-    LogInit(options.logPath.empty() ? DefaultLogPath() : options.logPath);
+    std::wstring logPath = options.logPath.empty() ? DefaultLogPath() : options.logPath;
+    if (options.logPath.empty() && (options.installCamera || options.uninstallCamera)) {
+        // Eigene Datei: Das laufende KrakznCam hält sein Protokoll offen.
+        const size_t slash = logPath.find_last_of(L'\\');
+        logPath = logPath.substr(0, slash + 1) + L"kamera-einrichtung.log";
+    }
+    LogInit(logPath);
     LogLine("KrakznCam %s startet", KRAKZNCAM_VERSION);
 
     CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
     MFStartup(MF_VERSION);
     NetInit();
+
+    // Einmalige Einrichtung der virtuellen Kamera (läuft mit Administratorrechten, ohne Fenster).
+    if (options.installCamera || options.uninstallCamera) {
+        const int result = options.installCamera ? VirtualCamera::InstallElevated() : VirtualCamera::UninstallElevated();
+        MFShutdown();
+        CoUninitialize();
+        return result;
+    }
 
     if (options.check) {
         const SetupReport report = RunSetupCheck();
@@ -428,9 +457,15 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand) {
     {
         FrameStore store(g_gfx.device.Get());
         HANDLE frameEvent = CreateEventW(nullptr, FALSE, FALSE, nullptr);
+        // Die Kamera vor dem Empfang anlegen und nach ihm abbauen: Der Empfang meldet ihr neue Bilder.
+        VirtualCamera camera(g_gfx.device.Get(), store);
         StreamClient client(g_gfx.device.Get(), store, frameEvent);
+        client.SetExtraFrameEvent(camera.FrameEvent());
+        // Im Selbsttest wird die Kamera nur auf Wunsch angemeldet (--vcam) oder nur beliefert (--vcam-feed).
+        if (!options.selftest || options.vcam) camera.Start(true);
+        else if (options.vcamFeed) camera.Start(false);
         client.Start(options.directHost, options.directPort);
-        App app(g_gfx.device.Get(), client, store, options.page, scale, options.selftest);
+        App app(g_gfx.device.Get(), client, store, camera, options.page, scale, options.selftest);
         g_app = &app;
 
         if (options.selftest) {
@@ -443,6 +478,7 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand) {
 
         g_app = nullptr;
         client.Stop();
+        camera.Stop();
         CloseHandle(frameEvent);
     }
 
