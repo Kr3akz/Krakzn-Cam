@@ -65,6 +65,29 @@ Verbindungsaufbau als erste Nachricht und erneut nach jeder Änderung der Einste
 - Kommt der PC nicht hinterher, verwirft die App Frames bis zum nächsten Keyframe.
   Die Verzögerung bleibt dadurch klein.
 
+### `0x03` STATE (iPhone → PC)
+
+Fähigkeiten und aktuelle Werte der Kamera als **flaches** UTF-8-JSON-Objekt. Verschachtelte
+Werte gibt es nicht, Grenzen stehen unter Schlüsseln mit Punkt. Die App schickt STATE nach
+dem Verbinden und danach höchstens viermal pro Sekunde, aber nur bei Änderungen, etwa wenn die
+Belichtungsautomatik nachregelt.
+
+| Schlüssel | Bedeutung |
+|-----------|-----------|
+| `lens`, `lenses` | aktuelles Objektiv; alle verfügbaren, durch Komma getrennt (`wide,ultraWide,telephoto,front`) |
+| `resolution`, `fps`, `quality` | Format: `hd720`/`hd1080`/`uhd4k`, `24`/`30`/`60`, `balanced`/`high`/`maximum` |
+| `zoom`, `zoom.max` | Zoomfaktor (1 = kein Zoom), höchstens 10 |
+| `exposure.auto`, `exposure.manual` | Belichtungsautomatik an; manuelle Belichtung möglich |
+| `iso`, `iso.min`, `iso.max` | ISO-Wert und Bereich |
+| `shutter`, `shutter.min`, `shutter.max` | Verschlusszeit in Sekunden; `shutter.max` ist auf die Bilddauer begrenzt |
+| `ev`, `ev.min`, `ev.max` | Belichtungskorrektur bei Automatik (EV) |
+| `wb.auto`, `wb.manual`, `wb.temp`, `wb.tint` | Weißabgleich: Automatik, manuell möglich, Farbtemperatur (Kelvin), Tönung |
+| `focus.auto`, `focus.manual`, `focus.pos` | Fokus: Automatik, manuell möglich, Position 0 (nah) bis 1 (fern) |
+| `torch`, `torch.available` | Licht (Blitz-LED) an; vorhanden |
+| `hdr`, `hdr.available` | HDR-Video an; vom Format unterstützt |
+| `stabilization`, `stabilization.available` | Bildstabilisierung an; möglich |
+| `mirror` | Bild gespiegelt |
+
 ### `0x10` COMMAND (PC → iPhone)
 
 Die Nutzdaten sind ein UTF-8-JSON-Objekt mit dem Feld `cmd` und sind höchstens 64 KB groß.
@@ -72,6 +95,9 @@ Die Nutzdaten sind ein UTF-8-JSON-Objekt mit dem Feld `cmd` und sind höchstens 
 | `cmd`      | Wirkung |
 |------------|---------|
 | `keyframe` | Die App schickt so bald wie möglich einen Keyframe. |
+| `set`      | Stellt die Kamera ein. Erlaubt sind dieselben Schlüssel wie bei STATE, ohne die mit Punkt-Endung `.min`/`.max`/`.available`/`.manual` und ohne `lenses`. Beispiel: `{"cmd":"set","exposure.auto":false,"iso":400,"shutter":0.01}` |
 
-Unbekannte Befehle werden ignoriert. Neue Befehle (Objektiv, Zoom, Fokus …) kommen
-später dazu, ohne dass sich die Version ändern muss.
+- `exposure.auto: false` ohne Werte friert die aktuelle Belichtung ein.
+- Dasselbe gilt für `wb.auto: false` und `focus.auto: false`.
+- Werte außerhalb der Grenzen begrenzt die App selbst.
+- Unbekannte Befehle und Schlüssel werden ignoriert.

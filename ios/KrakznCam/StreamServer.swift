@@ -18,6 +18,8 @@ final class StreamServer {
     var onStatus: ((Status) -> Void)?
     var onClientConnected: (() -> Void)?
     var onKeyframeRequest: (() -> Void)?
+    /// Einstell-Befehl vom PC ({"cmd": "set", ...}), siehe docs/protokoll.md.
+    var onCommand: (([String: Any]) -> Void)?
 
     private let port: UInt16
     private let lock = NSLock()
@@ -185,6 +187,8 @@ final class StreamServer {
         switch command {
         case "keyframe":
             onKeyframeRequest?()
+        case "set":
+            onCommand?(dictionary)
         default:
             break // Unbekannte Befehle ignorieren, damit neuere PC-Programme nichts kaputt machen.
         }
@@ -192,10 +196,23 @@ final class StreamServer {
 
     // MARK: - Senden
 
+    /// Schickt den Kamera-Zustand (Fähigkeiten und aktuelle Werte) an den PC. Wird nie verworfen.
+    func sendState(_ state: [String: Any]) {
+        lock.lock()
+        defer { lock.unlock() }
+        guard clientFD >= 0,
+              let json = try? JSONSerialization.data(withJSONObject: state, options: [.sortedKeys]) else { return }
+        enqueueLocked(MessageCodec.message(.state, payload: json))
+    }
+
     /// Muss mit gehaltenem `lock` aufgerufen werden.
     private func enqueueHelloLocked() {
         guard let json = try? JSONSerialization.data(withJSONObject: helloInfo) else { return }
-        let message = MessageCodec.message(.hello, payload: json)
+        enqueueLocked(MessageCodec.message(.hello, payload: json))
+    }
+
+    /// Muss mit gehaltenem `lock` aufgerufen werden.
+    private func enqueueLocked(_ message: Data) {
         let fd = clientFD
         let gen = generation
         sendQueue.async { [weak self] in

@@ -25,6 +25,8 @@ final class AppModel: ObservableObject {
     private let server = StreamServer(port: KrakznCamProtocol.port)
     private var started = false
     private var observers: [NSObjectProtocol] = []
+    private var stateTimer: Timer?
+    private var lastStateJSON: Data?
 
     init() {
         let lenses = CameraLens.allCases.filter { CameraCapture.device(for: $0) != nil }
@@ -46,11 +48,18 @@ final class AppModel: ObservableObject {
         encoder.onFrame = { annexB, keyframe, ptsMicros in
             server.sendVideoFrame(ptsMicros: ptsMicros, keyframe: keyframe, annexB: annexB)
         }
-        server.onClientConnected = {
+        server.onClientConnected = { [weak self] in
             encoder.requestKeyframe()
+            DispatchQueue.main.async { self?.lastStateJSON = nil }  // neuer PC bekommt den vollen Zustand
         }
         server.onKeyframeRequest = {
             encoder.requestKeyframe()
+        }
+        server.onCommand = { [weak self] command in
+            DispatchQueue.main.async { self?.handleRemote(command) }
+        }
+        camera.onControlsChanged = { controls in
+            controls.save()
         }
         server.onStatus = { [weak self] status in
             DispatchQueue.main.async { self?.connection = status }
@@ -99,8 +108,59 @@ final class AppModel: ObservableObject {
         started = true
         cameraPermission = .authorized
         server.start()
+        camera.setControls(CameraControls.load())
         applySettings()
         camera.start()
+        // Viermal pro Sekunde den Kamera-Zustand an den PC melden, aber nur Änderungen.
+        stateTimer = Timer.scheduledTimer(withTimeInterval: 0.25, repeats: true) { [weak self] _ in
+            self?.publishState()
+        }
+    }
+
+    /// Einstell-Befehl vom PC: Format-Schlüssel ändern die Einstellungen, der Rest die Kamera.
+    private func handleRemote(_ command: [String: Any]) {
+        var updated = settings
+        if let value = command["lens"] as? String, let lens = CameraLens(rawValue: value), availableLenses.contains(lens) {
+            updated.lens = lens
+        }
+        if let value = command["resolution"] as? String, let resolution = VideoResolution(rawValue: value) {
+            updated.resolution = resolution
+        }
+        if let value = (command["fps"] as? NSNumber)?.intValue, StreamSettings.fpsOptions.contains(value) {
+            updated.fps = value
+        }
+        if let value = command["quality"] as? String, let quality = StreamQuality(rawValue: value) {
+            updated.quality = quality
+        }
+        if updated != settings {
+            settings = updated  // didSet stellt die Kamera um
+        }
+        camera.updateControls(remote: command)
+        lastStateJSON = nil
+    }
+
+    private func publishState() {
+        guard server.hasClient else {
+            lastStateJSON = nil
+            return
+        }
+        let current = settings
+        let lenses = availableLenses.map(\.rawValue).joined(separator: ",")
+        camera.snapshot { [weak self] cameraState in
+            DispatchQueue.main.async {
+                guard let self else { return }
+                var state = cameraState
+                state["lens"] = current.lens.rawValue
+                state["lenses"] = lenses
+                state["resolution"] = current.resolution.rawValue
+                state["fps"] = current.fps
+                state["quality"] = current.quality.rawValue
+                guard let json = try? JSONSerialization.data(withJSONObject: state, options: [.sortedKeys]),
+                      json != self.lastStateJSON else { return }
+                self.lastStateJSON = json
+                self.server.sendState(state)
+            }
+        }
     }
 
     private func applySettings() {

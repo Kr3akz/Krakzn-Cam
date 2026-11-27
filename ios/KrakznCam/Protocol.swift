@@ -12,6 +12,7 @@ enum KrakznCamProtocol {
 enum MessageType: UInt8 {
     case hello = 0x01       // iPhone -> PC: JSON mit Formatinfos
     case videoFrame = 0x02  // iPhone -> PC: H.264-Frame (Annex B)
+    case state = 0x03       // iPhone -> PC: JSON mit Kamera-Fähigkeiten und aktuellen Werten
     case command = 0x10     // PC -> iPhone: JSON-Befehl
 }
 
