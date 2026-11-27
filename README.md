@@ -99,8 +99,10 @@ Hat sich die iPhone-App geändert, muss die neue `KrakznCam.ipa` von Hand mit Si
    und meldet sie bei Windows an. `krakzncam_vcam.dll` muss dafür neben `krakzncam.exe` liegen.
 2. In OBS eine Quelle **Videoaufnahmegerät** hinzufügen und **KrakznCam (Windows virtuelle Kamera)** wählen
    (1080p oder 720p, 30 oder 60 FPS). Das klappt genauso in Discord, Teams, Zoom und der Kamera-App.
-3. Die Kamera gibt es nur, solange KrakznCam läuft. Also zuerst KrakznCam starten, dann OBS.
-   Ohne iPhone-Bild zeigt sie einen Hinweis statt eines schwarzen Bildes.
+3. KrakznCam muss dafür nicht offen sein: Die Kamera ist dauerhaft bei Windows angemeldet. Benutzt
+   OBS sie und KrakznCam ist geschlossen, verbindet sich die Kamera selbst mit dem iPhone (im
+   Windows-Kameradienst, nur solange OBS sie benutzt). Startet man KrakznCam, übernimmt es nahtlos.
+   Die KrakznCam-App auf dem iPhone muss offen sein. Ohne iPhone-Bild zeigt die Kamera einen Hinweis.
 
 Die virtuelle Kamera kostet nur Leistung, während ein Programm sie wirklich benutzt: Dann rechnet die
 Grafikkarte das Bild auf das gewünschte Format um. Liegt eine neuere `krakzncam_vcam.dll` neben dem
