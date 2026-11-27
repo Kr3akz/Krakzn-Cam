@@ -26,7 +26,8 @@ jobs:
         shell: pwsh
         run: |
           New-Item -ItemType Directory -Force dist | Out-Null
-          Copy-Item build/Release/krakzncam.exe, build/Release/krakzncam_fakephone.exe dist/
+          Copy-Item build/Release/*.exe dist/
+          if (Test-Path build/Release/*.dll) { Copy-Item build/Release/*.dll dist/ }
           Get-ChildItem dist | Format-Table Name, Length
 
       - uses: actions/upload-artifact@v4

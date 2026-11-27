@@ -50,5 +50,8 @@ target_link_libraries(krakzncam_core PUBLIC
 add_executable(krakzncam WIN32 src/main.cpp src/App.cpp src/Theme.cpp)
 target_link_libraries(krakzncam PRIVATE krakzncam_core imgui d3dcompiler dwmapi)
 
+add_executable(krakzncam_iconmaker tools/IconMaker.cpp)
+target_link_libraries(krakzncam_iconmaker PRIVATE d2d1 windowscodecs ole32)
+
 add_executable(krakzncam_fakephone tools/fakephone.cpp tools/TestScene.cpp)
 target_link_libraries(krakzncam_fakephone PRIVATE krakzncam_core winmm d2d1 dwrite)
