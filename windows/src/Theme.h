@@ -66,6 +66,7 @@ constexpr char32_t Calendar = 0xE787;
 constexpr char32_t Monitor = 0xE7F4;
 constexpr char32_t Usb = 0xE88E;
 constexpr char32_t Camera = 0xE722;
+constexpr char32_t Folder = 0xE8B7;
 }  // namespace Icon
 
 // --- Text ---------------------------------------------------------------------------------

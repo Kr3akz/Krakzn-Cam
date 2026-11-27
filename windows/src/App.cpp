@@ -1,5 +1,6 @@
 #include "App.h"
 
+#include "TextUtil.h"
 #include "Theme.h"
 
 #include <algorithm>
@@ -140,8 +141,8 @@ ItemLook LookFor(const SetupItem& item) {
 
 }  // namespace
 
-App::App(ID3D11Device* device, StreamClient& client, FrameStore& store, Page initialPage)
-    : m_client(client), m_store(store), m_page(initialPage), m_pageShown(Clock::now()) {
+App::App(ID3D11Device* device, StreamClient& client, FrameStore& store, Page initialPage, float dpiScale)
+    : m_client(client), m_store(store), m_page(initialPage), m_pageShown(Clock::now()), m_dpiScale(dpiScale) {
     m_video.Init(device);
     Recheck();
 }
@@ -179,6 +180,9 @@ void App::Draw() {
     BeginFrame();
     const ImGuiViewport* viewport = ImGui::GetMainViewport();
     const ImVec2 size = viewport->Size;
+    // Wie bei Eidolon wächst die Oberfläche mit dem Fenster (Bezug: 1280 × 760), damit die
+    // Proportionen im Vollbild dieselben sind. Nie kleiner als 80 % der Bildschirm-Skalierung.
+    SetScale(std::max(m_dpiScale * 0.8f, std::min(size.x / 1280.0f, size.y / 760.0f)));
     const StreamStatus status = m_client.Status();
     const bool live = status.state == StreamStatus::State::Streaming && m_video.HasFrame();
 
@@ -280,14 +284,16 @@ void App::DrawCameraPage(const StreamStatus& status, ImVec2 min, ImVec2 max) {
     const float availableHeight = bottom - (min.y + Px(6.0f));
     const float cardWidth = std::max(Px(200.0f), std::min(availableWidth, availableHeight * 16.0f / 9.0f));
     const float cardHeight = cardWidth * 9.0f / 16.0f;
-    // Bleibt in der Höhe Platz, sitzt der Inhalt etwas über der Mitte statt oben zu kleben.
+    // Bleibt Platz, sitzt der Inhalt mittig (horizontal) und etwas über der Mitte (vertikal).
     const float top = min.y + Px(6.0f) + std::max(0.0f, availableHeight - cardHeight) * 0.42f;
-    const ImVec2 cardMin(min.x + pad, top);
+    const float compositionWidth = cardWidth + gap + column;
+    const float left = min.x + std::max(pad, ((max.x - min.x) - compositionWidth) * 0.5f);
+    const ImVec2 cardMin(left, top);
     const ImVec2 cardMax(cardMin.x + cardWidth, top + cardHeight);
     DrawPreview(dl, cardMin, cardMax, status, live);
 
     const float columnX = cardMax.x + gap;
-    const float columnWidth = max.x - pad - columnX;
+    const float columnWidth = column;
     const float heroBottom = DrawHero(dl, ImVec2(columnX, top + Px(4.0f)), columnWidth, status, live);
     const bool connected =
         status.state == StreamStatus::State::Streaming || status.state == StreamStatus::State::Connected;
@@ -479,20 +485,47 @@ void App::DrawSteps(ImDrawList* dl, ImVec2 min, float width, float bottom) {
 }
 
 void App::DrawSetupPage(ImVec2 min, ImVec2 max) {
-    const Fonts& fonts = GetFonts();
     const float pad = PagePadding(max.x - min.x);
+    const float gap = Px(28.0f);
+    const float available = (max.x - min.x) - pad * 2.0f;
+    // Breit genug: Liste und Anleitung nebeneinander, sonst untereinander.
+    const bool sideBySide = available >= Px(980.0f);
+    const float totalWidth = sideBySide ? std::min(available, Px(1240.0f)) : std::min(available, Px(820.0f));
+    const float listWidth = sideBySide ? (totalWidth - gap) * 0.55f : totalWidth;
+    const float guideWidth = sideBySide ? totalWidth - gap - listWidth : totalWidth;
+    const float left = min.x + ((max.x - min.x) - totalWidth) * 0.5f;
 
     ImGui::SetCursorScreenPos(min);
     ImGui::BeginChild("##setup_scroll", max - min, ImGuiChildFlags_None,
                       ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoBackground);
     ImDrawList* dl = ImGui::GetWindowDrawList();
     const ImVec2 origin = ImGui::GetCursorScreenPos();
+    // Etwas über der Mitte, solange alles passt (Höhe aus dem letzten Bild).
+    const float availableHeight = (max.y - min.y) - pad * 0.8f - Px(6.0f);
+    const float top = origin.y + Px(6.0f) + std::max(0.0f, availableHeight - m_setupHeight) * 0.38f;
 
-    const float sheetWidth = std::min(Px(820.0f), (max.x - min.x) - pad * 2.0f);
-    const float sheetX = min.x + ((max.x - min.x) - sheetWidth) * 0.5f;
+    if (sideBySide) {
+        const float sameHeight = std::max(m_listHeight, m_guideHeight);
+        m_listHeight = DrawSetupList(dl, ImVec2(left, top), listWidth, sameHeight);
+        m_guideHeight = DrawSideloadGuide(dl, ImVec2(left + listWidth + gap, top), guideWidth, sameHeight);
+        m_setupHeight = std::max(m_listHeight, m_guideHeight);
+    } else {
+        m_listHeight = DrawSetupList(dl, ImVec2(left, top), listWidth, 0.0f);
+        m_guideHeight = DrawSideloadGuide(dl, ImVec2(left, top + m_listHeight + gap), guideWidth, 0.0f);
+        m_setupHeight = m_listHeight + gap + m_guideHeight;
+    }
+
+    // Platz unter den Karten, damit man bis ans Ende scrollen kann.
+    ImGui::SetCursorScreenPos(ImVec2(min.x, top + m_setupHeight + pad * 0.6f));
+    ImGui::Dummy(ImVec2(1.0f, 1.0f));
+    ImGui::EndChild();
+}
+
+float App::DrawSetupList(ImDrawList* dl, ImVec2 pos, float width, float minHeight) {
+    const Fonts& fonts = GetFonts();
     const ImVec2 padding(Px(28.0f), Px(26.0f));
-    const float listLeft = sheetX + padding.x - Px(12.0f);
-    const float listRight = sheetX + sheetWidth - padding.x + Px(12.0f);
+    const float listLeft = pos.x + padding.x - Px(12.0f);
+    const float listRight = pos.x + width - padding.x + Px(12.0f);
     const float iconBox = Px(44.0f);
     const float textX = listLeft + Px(12.0f) + iconBox + Px(16.0f);
     const float titleSize = Px(17.0f);
@@ -504,41 +537,38 @@ void App::DrawSetupPage(ImVec2 min, ImVec2 max) {
         if (item.status == SetupItem::Status::Ok) return ChipWidth("Bereit", false);
         return 0.0f;
     };
-    auto rowHeight = [&](const SetupItem& item) {
+    auto textWidthFor = [&](const SetupItem& item) {
         const float trailing = trailingWidth(item);
-        const float textWidth = listRight - Px(12.0f) - textX - (trailing > 0 ? trailing + Px(16.0f) : 0.0f);
+        return listRight - Px(12.0f) - textX - (trailing > 0 ? trailing + Px(16.0f) : 0.0f);
+    };
+    auto contentHeight = [&](const SetupItem& item) {
         float content = Measure(fonts.light, titleSize, item.title).y;
-        if (!item.detail.empty()) content += Px(3.0f) + Measure(fonts.regular, descSize, item.detail, textWidth).y;
-        return std::max(iconBox, content) + Px(13.0f) * 2.0f;
+        if (!item.detail.empty()) content += Px(3.0f) + Measure(fonts.regular, descSize, item.detail, textWidthFor(item)).y;
+        return content;
     };
 
+    // Inhalt auf Ebene 1, die Karte danach auf Ebene 0 darunter (ihre Höhe steht erst am Ende fest).
+    dl->ChannelsSplit(2);
+    dl->ChannelsSetCurrent(1);
+
+    float y = pos.y + padding.y;
     const float titleHeight = Measure(fonts.light, Px(28.0f), "Einrichtung").y;
-    const float subHeight = Measure(fonts.light, Px(15.0f), "A").y;
-    float sheetHeight = padding.y + titleHeight + Px(4.0f) + subHeight + Px(16.0f);
-    for (const SetupItem& item : items) sheetHeight += rowHeight(item);
-    sheetHeight += Px(18.0f) + ButtonHeight(ButtonSize::Small) + padding.y;
-
-    const float sheetTop = origin.y + Px(6.0f);
-    const ImVec2 sheetMin(sheetX, sheetTop);
-    const ImVec2 sheetMax(sheetX + sheetWidth, sheetTop + sheetHeight);
-    Card(dl, sheetMin, sheetMax, Px(16.0f), 0.78f);
-
-    // Kopf der Karte mit Zusammenfassung.
-    float y = sheetTop + padding.y;
-    Text(dl, fonts.light, Px(28.0f), ImVec2(sheetX + padding.x, y), kText, "Einrichtung");
+    Text(dl, fonts.light, Px(28.0f), ImVec2(pos.x + padding.x, y), kText, "Einrichtung");
     const int open = OpenSetupItems();
-    const std::string summary = open == 0 ? "Alles bereit" : open == 1 ? "1 Punkt offen" : std::to_string(open) + " Punkte offen";
+    const std::string summary =
+        open == 0 ? "Alles bereit" : open == 1 ? "1 Punkt offen" : std::to_string(open) + " Punkte offen";
     const float summaryWidth = ChipWidth(summary, true);
-    Chip(dl, ImVec2(sheetMax.x - padding.x - summaryWidth, y + (titleHeight - ChipHeight()) * 0.5f), summary,
+    Chip(dl, ImVec2(pos.x + width - padding.x - summaryWidth, y + (titleHeight - ChipHeight()) * 0.5f), summary,
          open == 0 ? Tone::Ok : Tone::Warn, true);
     y += titleHeight + Px(4.0f);
-    Text(dl, fonts.light, Px(15.0f), ImVec2(sheetX + padding.x, y), kText2,
-         "Was KrakznCam und Sideloadly auf diesem PC brauchen.");
-    y += subHeight + Px(16.0f);
+    y += Text(dl, fonts.light, Px(15.0f), ImVec2(pos.x + padding.x, y), kText2,
+              "Was KrakznCam und Sideloadly auf diesem PC brauchen.", width - padding.x * 2.0f) +
+         Px(16.0f);
 
     for (size_t i = 0; i < items.size(); ++i) {
         const SetupItem& item = items[i];
-        const float height = rowHeight(item);
+        const float content = contentHeight(item);
+        const float height = std::max(iconBox, content) + Px(13.0f) * 2.0f;
         if (i > 0) {
             dl->AddRectFilled(ImVec2(listLeft + Px(12.0f), y), ImVec2(listRight - Px(12.0f), y + 1.0f),
                               A(White(0.07f)));
@@ -548,14 +578,13 @@ void App::DrawSetupPage(ImVec2 min, ImVec2 max) {
         dl->AddRectFilled(iconMin, iconMin + ImVec2(iconBox, iconBox), A(IM_COL32(0, 0, 0, 90)), Px(7.0f));
         DrawIcon(dl, look.icon, iconMin + ImVec2(iconBox, iconBox) * 0.5f, Px(19.0f), look.color);
 
-        const float trailing = trailingWidth(item);
-        const float textWidth = listRight - Px(12.0f) - textX - (trailing > 0 ? trailing + Px(16.0f) : 0.0f);
-        float content = Measure(fonts.light, titleSize, item.title).y;
-        if (!item.detail.empty()) content += Px(3.0f) + Measure(fonts.regular, descSize, item.detail, textWidth).y;
         float textY = y + (height - content) * 0.5f;
         textY += Text(dl, fonts.light, titleSize, ImVec2(textX, textY), kText, item.title) + Px(3.0f);
-        if (!item.detail.empty()) Text(dl, fonts.regular, descSize, ImVec2(textX, textY), kText3, item.detail, textWidth);
+        if (!item.detail.empty()) {
+            Text(dl, fonts.regular, descSize, ImVec2(textX, textY), kText3, item.detail, textWidthFor(item));
+        }
 
+        const float trailing = trailingWidth(item);
         const float rowCenter = y + height * 0.5f;
         if (!item.actionLabel.empty()) {
             const ImVec2 buttonPos(listRight - Px(12.0f) - trailing, rowCenter - ButtonHeight(ButtonSize::Small) * 0.5f);
@@ -573,18 +602,134 @@ void App::DrawSetupPage(ImVec2 min, ImVec2 max) {
     // Fuß: erneut prüfen.
     y += Px(18.0f);
     const float buttonWidth = ButtonWidth("Erneut prüfen", Icon::Refresh, ButtonSize::Small);
-    const float footTextWidth = sheetWidth - padding.x * 2.0f - buttonWidth - Px(20.0f);
-    const float footTextHeight = Measure(fonts.regular, Px(13.0f), "A").y;
-    Text(dl, fonts.regular, Px(13.0f),
-         ImVec2(sheetX + padding.x, y + (ButtonHeight(ButtonSize::Small) - footTextHeight) * 0.5f), kText3,
-         "Wird auch automatisch geprüft, wenn du ins Fenster zurückkommst.", footTextWidth);
-    if (Button("##recheck", "Erneut prüfen", Icon::Refresh, ImVec2(sheetMax.x - padding.x - buttonWidth, y),
-               ButtonSize::Small)) {
-        Recheck();
+    const float footTextWidth = width - padding.x * 2.0f - buttonWidth - Px(20.0f);
+    const char* footText = "Wird auch automatisch geprüft, wenn du ins Fenster zurückkommst.";
+    const float footTextHeight = Measure(fonts.regular, Px(13.0f), footText, footTextWidth).y;
+    const float footHeight = std::max(ButtonHeight(ButtonSize::Small), footTextHeight);
+    Text(dl, fonts.regular, Px(13.0f), ImVec2(pos.x + padding.x, y + (footHeight - footTextHeight) * 0.5f), kText3,
+         footText, footTextWidth);
+    const bool recheck = Button("##recheck", "Erneut prüfen", Icon::Refresh,
+                                ImVec2(pos.x + width - padding.x - buttonWidth,
+                                       y + (footHeight - ButtonHeight(ButtonSize::Small)) * 0.5f),
+                                ButtonSize::Small);
+    y += footHeight + padding.y;
+    const float height = y - pos.y;
+
+    dl->ChannelsSetCurrent(0);
+    Card(dl, pos, pos + ImVec2(width, std::max(height, minHeight)), Px(16.0f), 0.78f);
+    dl->ChannelsMerge();
+    if (recheck) Recheck();  // erst nach dem Zeichnen: die Liste oben gehört noch zum alten Stand
+    return height;
+}
+
+float App::DrawSideloadGuide(ImDrawList* dl, ImVec2 pos, float width, float minHeight) {
+    const Fonts& fonts = GetFonts();
+    const ImVec2 padding(Px(28.0f), Px(26.0f));
+    const float x = pos.x + padding.x;
+    const float inner = width - padding.x * 2.0f;
+    const float circle = Px(26.0f);
+    const float stepX = x + circle + Px(14.0f);
+    const float stepWidth = inner - circle - Px(14.0f);
+    const float stepSize = Px(14.5f);
+
+    const std::wstring& package = m_setup.appPackage;
+    std::string packageName = "KrakznCam.ipa";
+    if (!package.empty()) packageName = Utf8(package.substr(package.find_last_of(L"\\/") + 1));
+
+    dl->ChannelsSplit(2);
+    dl->ChannelsSetCurrent(1);
+
+    float y = pos.y + padding.y;
+    y += Kicker(dl, ImVec2(x, y), "SIDELOADLY", 11.0f) + Px(8.0f);
+    y += Text(dl, fonts.light, Px(26.0f), ImVec2(x, y), kText, "App aufs iPhone bringen", inner) + Px(4.0f);
+    y += Text(dl, fonts.light, Px(15.0f), ImVec2(x, y), kText2,
+              "Einmal einrichten, danach erneuert Sideloadly die Signatur von selbst.", inner) +
+         Px(20.0f);
+
+    const std::string steps[] = {
+        "iPhone per Kabel anschließen, entsperren und „Diesem Computer vertrauen“ bestätigen.",
+        "Sideloadly öffnen und die Datei " + packageName + " in das Fenster ziehen.",
+        "Apple-ID eintragen und auf Start klicken. Den Bestätigungscode gibst du direkt in Sideloadly ein.",
+        "Auf dem iPhone: Einstellungen → Datenschutz & Sicherheit → Entwicklermodus einschalten. Das iPhone "
+        "startet dafür neu.",
+        "Einstellungen → Allgemein → VPN & Geräteverwaltung → deiner Apple-ID vertrauen. Dafür braucht das "
+        "iPhone Internet.",
+        "KrakznCam auf dem iPhone öffnen. Das Bild erscheint im Reiter Kamera.",
+    };
+    const float lineHeight = Measure(fonts.regular, stepSize, "A").y;
+    for (size_t i = 0; i < std::size(steps); ++i) {
+        const float textHeight = Measure(fonts.regular, stepSize, steps[i], stepWidth).y;
+        const ImVec2 center(x + circle * 0.5f, y + circle * 0.5f);
+        dl->AddCircleFilled(center, circle * 0.5f, A(White(0.10f)));
+        const std::string number = std::to_string(i + 1);
+        const ImVec2 numberSize = Measure(fonts.semibold, Px(13.0f), number);
+        Text(dl, fonts.semibold, Px(13.0f), center - numberSize * 0.5f, kText, number);
+        const float textTop = textHeight > lineHeight * 1.5f ? y : y + (circle - lineHeight) * 0.5f;
+        Text(dl, fonts.regular, stepSize, ImVec2(stepX, textTop), kText2, steps[i], stepWidth);
+        y += std::max(circle, textTop - y + textHeight);
+
+        if (i == 1) {
+            // Knöpfe direkt am passenden Schritt.
+            y += Px(10.0f);
+            float buttonX = stepX;
+            auto place = [&](std::string_view label, char32_t icon) {
+                const float buttonWidth = ButtonWidth(label, icon, ButtonSize::Small);
+                if (buttonX > stepX && buttonX + buttonWidth > stepX + stepWidth) {
+                    buttonX = stepX;
+                    y += ButtonHeight(ButtonSize::Small) + Px(8.0f);
+                }
+                const ImVec2 at(buttonX, y);
+                buttonX += buttonWidth + Px(10.0f);
+                return at;
+            };
+            if (!m_setup.sideloadlyExe.empty()) {
+                const ImVec2 at = place("Sideloadly öffnen", Icon::OpenExternal);
+                if (Button("##guide_sideloadly", "Sideloadly öffnen", Icon::OpenExternal, at, ButtonSize::Small)) {
+                    OpenTarget(m_setup.sideloadlyExe);
+                }
+            } else {
+                const ImVec2 at = place("Sideloadly herunterladen", Icon::OpenExternal);
+                if (Button("##guide_download", "Sideloadly herunterladen", Icon::OpenExternal, at, ButtonSize::Small)) {
+                    OpenTarget(L"https://sideloadly.io");
+                }
+            }
+            if (!package.empty()) {
+                const ImVec2 at = place("App-Datei zeigen", Icon::Folder);
+                if (Button("##guide_package", "App-Datei zeigen", Icon::Folder, at, ButtonSize::Small)) {
+                    RevealInExplorer(package);
+                }
+                y += ButtonHeight(ButtonSize::Small);
+            } else {
+                y += ButtonHeight(ButtonSize::Small) + Px(6.0f);
+                y += Text(dl, fonts.regular, Px(13.0f), ImVec2(stepX, y), kText3,
+                          "Die App-Datei liegt dem KrakznCam-Download bei.", stepWidth);
+            }
+        }
+        y += Px(14.0f);
     }
 
-    // Platz unter der Karte, damit man bis ans Ende scrollen kann.
-    ImGui::SetCursorScreenPos(ImVec2(min.x, sheetMax.y + pad * 0.6f));
-    ImGui::Dummy(ImVec2(1.0f, 1.0f));
-    ImGui::EndChild();
+    // Tipp für den häufigsten Fehler beim ersten Mal.
+    y += Px(2.0f);
+    {
+        const ImVec2 notePadding(Px(14.0f), Px(11.0f));
+        const float iconSize = Px(15.0f);
+        const float noteTextX = x + notePadding.x + iconSize + Px(10.0f);
+        const float noteTextWidth = x + inner - notePadding.x - noteTextX;
+        const char* tip = "Meldet Sideloadly „LOCKDOWN_E_INVALID_HOST_ID“: iPhone abstecken, wieder anstecken, "
+                          "entsperren und erneut vertrauen.";
+        const float noteTextHeight = Measure(fonts.regular, Px(13.5f), tip, noteTextWidth).y;
+        const float noteHeight = noteTextHeight + notePadding.y * 2.0f;
+        dl->AddRectFilled(ImVec2(x, y), ImVec2(x + inner, y + noteHeight), A(White(0.06f)), Px(9.0f));
+        DrawIcon(dl, Icon::Info, ImVec2(x + notePadding.x + iconSize * 0.5f, y + notePadding.y + Px(9.0f)), iconSize,
+                 kText2);
+        Text(dl, fonts.regular, Px(13.5f), ImVec2(noteTextX, y + notePadding.y), kText2, tip, noteTextWidth);
+        y += noteHeight;
+    }
+    y += padding.y;
+    const float height = y - pos.y;
+
+    dl->ChannelsSetCurrent(0);
+    Card(dl, pos, pos + ImVec2(width, std::max(height, minHeight)), Px(16.0f), 0.78f);
+    dl->ChannelsMerge();
+    return height;
 }

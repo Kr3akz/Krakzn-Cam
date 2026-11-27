@@ -47,6 +47,8 @@ struct Options {
     bool selftest = false;
     int frames = 60;        // Selbsttest: so viele Bilder abwarten (0 = nur Zeit ablaufen lassen)
     double timeout = 30.0;  // Selbsttest: höchstens so viele Sekunden
+    int windowWidth = 1280;  // Selbsttest: Fenstergröße
+    int windowHeight = 760;
     App::Page page = App::Page::Camera;
     std::wstring snapshotPath;
     std::wstring screenshotPath;
@@ -90,6 +92,13 @@ Options ParseOptions() {
             options.timeout = _wtof(next().c_str());
         } else if (arg == L"--page") {
             options.page = next() == L"setup" ? App::Page::Setup : App::Page::Camera;
+        } else if (arg == L"--size") {
+            const std::wstring value = next();  // z. B. 1920x1080
+            const size_t x = value.find(L'x');
+            if (x != std::wstring::npos) {
+                options.windowWidth = _wtoi(value.substr(0, x).c_str());
+                options.windowHeight = _wtoi(value.substr(x + 1).c_str());
+            }
         } else if (arg == L"--snapshot") {
             options.snapshotPath = next();
         } else if (arg == L"--screenshot") {
@@ -351,8 +360,8 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand) {
     float scale = options.selftest
                       ? 1.0f
                       : ImGui_ImplWin32_GetDpiScaleForMonitor(MonitorFromPoint(POINT{0, 0}, MONITOR_DEFAULTTOPRIMARY));
-    const int width = options.selftest ? 1280 : static_cast<int>(1200 * scale);
-    const int height = options.selftest ? 760 : static_cast<int>(740 * scale);
+    const int width = options.selftest ? options.windowWidth : static_cast<int>(1200 * scale);
+    const int height = options.selftest ? options.windowHeight : static_cast<int>(740 * scale);
     HWND hwnd = CreateWindowExW(0, windowClass.lpszClassName, L"KrakznCam", WS_OVERLAPPEDWINDOW, CW_USEDEFAULT,
                                 CW_USEDEFAULT, width, height, nullptr, nullptr, instance, nullptr);
     if (!hwnd || !CreateSwapChain(hwnd)) {
@@ -368,7 +377,7 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand) {
         HANDLE frameEvent = CreateEventW(nullptr, FALSE, FALSE, nullptr);
         StreamClient client(g_gfx.device.Get(), store, frameEvent);
         client.Start(options.directHost, options.directPort);
-        App app(g_gfx.device.Get(), client, store, options.page);
+        App app(g_gfx.device.Get(), client, store, options.page, scale);
         g_app = &app;
 
         if (options.selftest) {

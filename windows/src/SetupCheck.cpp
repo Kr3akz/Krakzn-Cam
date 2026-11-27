@@ -4,9 +4,14 @@
 #include "TextUtil.h"
 
 #include <shellapi.h>
+#include <shlobj.h>
+#include <shobjidl.h>
+#include <tlhelp32.h>
+#include <wrl/client.h>
 
 #include <algorithm>
 #include <cwctype>
+#include <filesystem>
 
 namespace {
 
@@ -162,7 +167,154 @@ std::wstring FindExecutable(const InstalledApp& app, const wchar_t* exeName) {
     return {};
 }
 
+bool FileExists(const std::wstring& path) {
+    return !path.empty() && GetFileAttributesW(path.c_str()) != INVALID_FILE_ATTRIBUTES;
+}
+
+std::wstring FolderOf(const std::wstring& path) {
+    const size_t slash = path.find_last_of(L"\\/");
+    return slash == std::wstring::npos ? std::wstring() : path.substr(0, slash);
+}
+
+// Programmpfad aus einer Befehlszeile wie "\"D:\\x\\y.exe\" --arg" oder "D:\\x\\y.exe".
+std::wstring ExecutableOf(std::wstring command) {
+    if (!command.empty() && command.front() == L'"') {
+        const size_t quote = command.find(L'"', 1);
+        return command.substr(1, quote == std::wstring::npos ? std::wstring::npos : quote - 1);
+    }
+    std::wstring lower = command;
+    std::transform(lower.begin(), lower.end(), lower.begin(), ::towlower);
+    const size_t exe = lower.find(L".exe");
+    return exe == std::wstring::npos ? command : command.substr(0, exe + 4);
+}
+
+std::wstring KnownFolder(REFKNOWNFOLDERID id) {
+    PWSTR folder = nullptr;
+    std::wstring path;
+    if (SUCCEEDED(SHGetKnownFolderPath(id, 0, nullptr, &folder))) path = folder;
+    CoTaskMemFree(folder);
+    return path;
+}
+
+std::wstring ResolveShortcut(const std::wstring& link) {
+    Microsoft::WRL::ComPtr<IShellLinkW> shellLink;
+    Microsoft::WRL::ComPtr<IPersistFile> file;
+    if (FAILED(CoCreateInstance(CLSID_ShellLink, nullptr, CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&shellLink))) ||
+        FAILED(shellLink.As(&file)) || FAILED(file->Load(link.c_str(), STGM_READ))) {
+        return {};
+    }
+    wchar_t target[MAX_PATH] = {};
+    if (FAILED(shellLink->GetPath(target, MAX_PATH, nullptr, 0))) return {};
+    return target;
+}
+
+// Pfad eines laufenden Prozesses (leer, wenn er nicht läuft).
+std::wstring RunningProcessPath(const wchar_t* exeName) {
+    std::wstring result;
+    HANDLE snapshot = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
+    if (snapshot == INVALID_HANDLE_VALUE) return result;
+    PROCESSENTRY32W entry{};
+    entry.dwSize = sizeof(entry);
+    for (BOOL ok = Process32FirstW(snapshot, &entry); ok; ok = Process32NextW(snapshot, &entry)) {
+        if (_wcsicmp(entry.szExeFile, exeName) != 0) continue;
+        result = exeName;  // läuft; den vollen Pfad gibt es nur mit Zugriff auf den Prozess
+        if (HANDLE process = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE, entry.th32ProcessID)) {
+            wchar_t path[MAX_PATH];
+            DWORD size = MAX_PATH;
+            if (QueryFullProcessImageNameW(process, 0, path, &size)) result = path;
+            CloseHandle(process);
+        }
+        break;
+    }
+    CloseHandle(snapshot);
+    return result;
+}
+
+// Autostart-Eintrag des Sideloadly-Hintergrunddienstes (erneuert die Signaturen).
+std::wstring SideloadlyDaemonAutostart() {
+    HKEY key = nullptr;
+    if (RegOpenKeyExW(HKEY_CURRENT_USER, L"Software\\Microsoft\\Windows\\CurrentVersion\\Run", 0, KEY_READ, &key) !=
+        ERROR_SUCCESS) {
+        return {};
+    }
+    std::wstring result;
+    for (DWORD index = 0;; ++index) {
+        wchar_t name[256];
+        DWORD nameLength = 256;
+        BYTE data[2048];
+        DWORD dataLength = sizeof(data) - sizeof(wchar_t);
+        DWORD type = 0;
+        if (RegEnumValueW(key, index, name, &nameLength, nullptr, &type, data, &dataLength) != ERROR_SUCCESS) break;
+        if (type != REG_SZ && type != REG_EXPAND_SZ) continue;
+        data[dataLength] = 0;
+        data[dataLength + 1] = 0;
+        const std::wstring command(reinterpret_cast<const wchar_t*>(data));
+        if (Contains(command, L"sideloadlydaemon")) {
+            result = ExecutableOf(command);
+            break;
+        }
+    }
+    RegCloseKey(key);
+    return result;
+}
+
+// Der Sideloadly-Installer trägt sich nicht in die Programmliste ein und lässt sich frei
+// installieren (z. B. D:\Sideloadly). Deshalb an mehreren Stellen suchen.
+std::wstring FindSideloadly(const InstalledApp* entry, const std::wstring& daemonAutostart) {
+    std::vector<std::wstring> candidates;
+    if (entry) candidates.push_back(FindExecutable(*entry, L"sideloadly.exe"));
+    if (!daemonAutostart.empty()) candidates.push_back(FolderOf(daemonAutostart) + L"\\sideloadly.exe");
+    for (const wchar_t* exe : {L"sideloadly.exe", L"sideloadlydaemon.exe"}) {
+        const std::wstring running = RunningProcessPath(exe);
+        if (running.find(L'\\') != std::wstring::npos) candidates.push_back(FolderOf(running) + L"\\sideloadly.exe");
+    }
+    for (const std::wstring& programs : {KnownFolder(FOLDERID_Programs), KnownFolder(FOLDERID_CommonPrograms)}) {
+        if (programs.empty()) continue;
+        std::error_code error;
+        namespace fs = std::filesystem;
+        for (fs::recursive_directory_iterator it(programs, fs::directory_options::skip_permission_denied, error), end;
+             !error && it != end; it.increment(error)) {
+            const fs::path& path = it->path();
+            if (path.extension() == L".lnk" && Contains(path.filename().wstring(), L"sideloadly")) {
+                candidates.push_back(ResolveShortcut(path.wstring()));
+            }
+        }
+    }
+    for (const std::wstring& base : {KnownFolder(FOLDERID_LocalAppData) + L"\\Programs\\Sideloadly",
+                                     KnownFolder(FOLDERID_ProgramFiles) + L"\\Sideloadly",
+                                     KnownFolder(FOLDERID_ProgramFilesX86) + L"\\Sideloadly",
+                                     KnownFolder(FOLDERID_LocalAppData) + L"\\Sideloadly"}) {
+        candidates.push_back(base + L"\\sideloadly.exe");
+    }
+    for (const std::wstring& candidate : candidates) {
+        if (Contains(candidate, L"sideloadly.exe") && FileExists(candidate)) return candidate;
+    }
+    return {};
+}
+
+// Die KrakznCam-App für das iPhone (.ipa) liegt neben krakzncam.exe oder einen Ordner darüber.
+std::wstring FindAppPackage() {
+    wchar_t module[MAX_PATH];
+    if (!GetModuleFileNameW(nullptr, module, MAX_PATH)) return {};
+    namespace fs = std::filesystem;
+    const fs::path folder = fs::path(module).parent_path();
+    for (const fs::path& search : {folder, folder.parent_path()}) {
+        std::error_code error;
+        for (fs::directory_iterator it(search, error), end; !error && it != end; it.increment(error)) {
+            std::wstring name = it->path().filename().wstring();
+            std::transform(name.begin(), name.end(), name.begin(), ::towlower);
+            if (StartsWith(name, L"krakzncam") && it->path().extension() == L".ipa") return it->path().wstring();
+        }
+    }
+    return {};
+}
+
 }  // namespace
+
+void RevealInExplorer(const std::wstring& path) {
+    const std::wstring arguments = L"/select,\"" + path + L"\"";
+    ShellExecuteW(nullptr, L"open", L"explorer.exe", arguments.c_str(), nullptr, SW_SHOWNORMAL);
+}
 
 const char* SetupStatusName(SetupItem::Status status) {
     switch (status) {
@@ -260,20 +412,30 @@ SetupReport RunSetupCheck() {
     }
 
 
-    // Sideloadly
-    const InstalledApp* sideloadly = FindApp(apps, [](const std::wstring& n) { return Contains(n, L"Sideloadly"); });
+    // Sideloadly und sein Hintergrunddienst, der die Signatur automatisch erneuert.
+    const InstalledApp* sideloadlyEntry =
+        FindApp(apps, [](const std::wstring& n) { return Contains(n, L"Sideloadly"); });
+    const std::wstring daemonAutostart = SideloadlyDaemonAutostart();
+    report.sideloadlyExe = FindSideloadly(sideloadlyEntry, daemonAutostart);
+    report.sideloadlyDaemonAutostart = !daemonAutostart.empty();
+    report.sideloadlyDaemonRunning = !RunningProcessPath(L"sideloadlydaemon.exe").empty();
+    report.appPackage = FindAppPackage();
     {
         SetupItem item;
         item.key = "sideloadly";
         item.title = "Sideloadly";
-        if (sideloadly) {
+        if (!report.sideloadlyExe.empty()) {
             item.status = SetupItem::Status::Ok;
-            item.detail = sideloadly->version.empty() ? "Installiert" : "Version " + Utf8(sideloadly->version);
-            report.sideloadlyExe = FindExecutable(*sideloadly, L"sideloadly.exe");
-            if (!report.sideloadlyExe.empty()) {
-                item.actionLabel = "Öffnen";
-                item.actionTarget = report.sideloadlyExe;
+            if (report.sideloadlyDaemonRunning) {
+                item.detail = "Erneuert die Signatur automatisch, solange sein Hintergrunddienst läuft (läuft gerade).";
+            } else if (report.sideloadlyDaemonAutostart) {
+                item.detail = "Erneuert die Signatur automatisch. Sein Hintergrunddienst startet mit Windows.";
+            } else {
+                item.detail = "Bringt die App aufs iPhone. Automatisches Erneuern ist aus, also alle 7 Tage neu "
+                              "aufspielen.";
             }
+            item.actionLabel = "Öffnen";
+            item.actionTarget = report.sideloadlyExe;
         } else {
             item.status = SetupItem::Status::Missing;
             item.detail = "Bringt die KrakznCam-App auf das iPhone.";
@@ -296,6 +458,6 @@ SetupReport RunSetupCheck() {
         report.items.push_back(item);
     }
 
-    report.sideloadReady = iTunesOk && iCloudOk && sideloadly != nullptr;
+    report.sideloadReady = iTunesOk && iCloudOk && !report.sideloadlyExe.empty();
     return report;
 }
